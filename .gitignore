@@ -22,3 +22,6 @@ chroma_data/
 # OS
 Thumbs.db
 .DS_Store
+
+# Local-only internal docs
+AUDIT_REPORT.md
