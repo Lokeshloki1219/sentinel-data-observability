@@ -9,7 +9,7 @@ sets Outcome and writes a MemoryRecord.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from config import config
@@ -28,6 +28,12 @@ from memory.embed import build_summary_text
 from observability.detection.statistical import compute_zscore
 
 logger = logging.getLogger(__name__)
+
+
+def _as_aware(dt: datetime) -> datetime:
+    """Coerce a possibly-naive datetime to timezone-aware UTC."""
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
 
 # Statuses eligible for auto-resolution checking
 _WATCHABLE = {
@@ -76,10 +82,11 @@ def check_auto_resolution(
 
         # Get recent metrics since the incident was created
         recent = store.get_recent_metrics(dataset, stage, n=k + 5)
-        # Filter to runs AFTER the incident was created
+        # Filter to runs AFTER the incident was created (tz-safe comparison)
+        created_at = _as_aware(incident.created_at)
         post_incident = [
             m for m in recent
-            if m.ts_run > incident.created_at
+            if _as_aware(m.ts_run) > created_at
         ]
 
         if len(post_incident) < k:
@@ -89,14 +96,14 @@ def check_auto_resolution(
         # Check if the metric has returned to baseline in the last K runs
         if _metric_in_baseline(metric_name, post_incident[-k:], recent):
             # Auto-resolve!
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             resolution_method = (
                 ResolutionMethod.action
                 if incident.status == IncidentStatus.acted
                 else ResolutionMethod.auto
             )
 
-            time_delta = (now - incident.created_at).total_seconds() / 60.0
+            time_delta = (now - _as_aware(incident.created_at)).total_seconds() / 60.0
 
             outcome = Outcome(
                 incident_id=incident.incident_id,

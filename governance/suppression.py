@@ -14,7 +14,7 @@ anomalies before escalation."
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List
 
 from schemas import (
@@ -75,7 +75,7 @@ def create_suppression_from_incident(
         effect=SuppressionEffect.suppress,
         param=None,
         created_from_incident=incident.incident_id,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
     )
 
     store.save_suppression_rule(rule)

@@ -177,27 +177,18 @@ def _render_health_timeline(store: SentinelStore):
 def _render_incidents(store: SentinelStore, memory_store: MemoryStore, executor: ActionExecutor):
     st.subheader("Incident Feed")
 
-    # Fetch all incidents
+    # Fetch every incident (all statuses), newest first by created_at.
+    all_incidents: list[Incident] = []
     try:
-        all_incidents = store.get_open_incidents()
-    except Exception:
-        all_incidents = []
-
-    # Also try to get resolved / other status incidents
-    try:
-        conn = store.conn
-        rows = conn.execute(
-            "SELECT data FROM incidents ORDER BY ts_created DESC LIMIT 50"
-        ).fetchall()
-        from schemas import Incident as Inc
-        all_incidents = []
+        rows = store.conn.execute("SELECT data FROM incidents LIMIT 500").fetchall()
         for row in rows:
             try:
-                all_incidents.append(Inc.model_validate_json(row[0]))
+                all_incidents.append(Incident.model_validate_json(row[0]))
             except Exception:
                 continue
+        all_incidents.sort(key=lambda i: i.created_at, reverse=True)
     except Exception:
-        pass
+        all_incidents = []
 
     if not all_incidents:
         st.info("No incidents recorded yet.")
@@ -227,11 +218,10 @@ def _render_incident_card(
     executor: ActionExecutor,
 ):
     severity = incident.report.severity.value if incident.report else "unknown"
-    sev_color = SEVERITY_COLORS.get(severity, "#6b7280")
-    status_color = STATUS_COLORS.get(incident.status.value, "#6b7280")
+    sev_emoji = {"low": "🟢", "medium": "🟡", "high": "🟠", "critical": "🔴"}.get(severity, "⚪")
 
     with st.expander(
-        f":{severity.upper()}: **{incident.dataset}/{incident.stage}** — "
+        f"{sev_emoji} **{incident.dataset}/{incident.stage}** — "
         f"`{incident.status.value}` | {incident.incident_id[:8]}",
         expanded=(incident.status in {IncidentStatus.open, IncidentStatus.awaiting_approval}),
     ):
@@ -239,7 +229,7 @@ def _render_incident_card(
         c1, c2, c3 = st.columns([2, 1, 1])
         c1.markdown(f"**Run:** `{incident.run_id}`")
         c2.markdown(f"**Created:** {incident.created_at.strftime('%Y-%m-%d %H:%M')}")
-        c3.markdown(f"**Status:** :{status_color}[{incident.status.value}]")
+        c3.markdown(f"**Status:** `{incident.status.value}`")
 
         # Anomalies
         if incident.anomalies:

@@ -8,6 +8,7 @@ Each function is deterministic given its inputs and carries no side effects.
 from __future__ import annotations
 
 import logging
+import math
 from typing import Dict, List, Tuple
 
 import numpy as np
@@ -17,6 +18,11 @@ logger = logging.getLogger(__name__)
 
 # Small constant to avoid log(0) / division-by-zero in PSI calculation.
 _EPS = 1e-10
+
+# Sentinel z-score for a maximal (degenerate) deviation: history has zero
+# variance but the current value differs.  A large *finite* value keeps the
+# deviation JSON-serialisable (unlike ``inf``) while guaranteeing escalation.
+_DEGENERATE_Z = 100.0
 
 
 def compute_zscore(current: float, history: List[float]) -> float:
@@ -33,8 +39,10 @@ def compute_zscore(current: float, history: List[float]) -> float:
     Returns
     -------
     float
-        The z-score.  Returns ``0.0`` when *history* is too short or has
-        zero variance.
+        The z-score.  Returns ``0.0`` when *history* is too short.  When the
+        history has zero variance, returns ``0.0`` if *current* equals the
+        constant baseline, otherwise a large signed sentinel (a constant
+        series that suddenly changes is maximally anomalous).
     """
     if len(history) < 2:
         return 0.0
@@ -42,7 +50,9 @@ def compute_zscore(current: float, history: List[float]) -> float:
     mu = float(np.mean(arr))
     sigma = float(np.std(arr, ddof=1))
     if sigma == 0.0:
-        return 0.0
+        if math.isclose(current, mu):
+            return 0.0
+        return math.copysign(_DEGENERATE_Z, current - mu)
     return (current - mu) / sigma
 
 

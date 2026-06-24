@@ -25,6 +25,16 @@ import pandas as pd
 from schemas import JobStatus, OperationalSignals
 from config import config
 
+
+def reference_now_for_day(day: int) -> datetime:
+    """Synthetic wall-clock for a run: the end of the logical *day*.
+
+    A fresh batch's latest ``step`` is ``day*24 + 23``; anchoring "now" one
+    hour later (``day*24 + 24``) yields ~60 min freshness for healthy data and
+    large freshness once the ``stale_data`` fault shifts ``step`` backwards.
+    """
+    return config.STEP_EPOCH + timedelta(hours=day * 24 + 24)
+
 from pipeline.ingest import generate_batch
 from pipeline.faults import FaultSpec, inject_fault
 from pipeline.transform.transform import (
@@ -190,6 +200,7 @@ def run_pipeline(
     manifest: Dict[str, Any] = {
         "run_id": run_id,
         "day": day,
+        "reference_now": reference_now_for_day(day),
         "batches": batches,
         "operational_signals": op_signals,
         "fault_injected": fault_spec is not None,

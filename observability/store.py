@@ -10,9 +10,11 @@ the schema can evolve without DDL migrations.
 from __future__ import annotations
 
 import logging
+import re
 from typing import List, Optional
 
 import duckdb
+import pandas as pd
 
 from schemas import (
     AuditEntry,
@@ -123,10 +125,64 @@ class SentinelStore:
                 data        JSON NOT NULL
             )
             """,
+            # 8. anomaly_streaks — debounce bookkeeping (Section 11)
+            """
+            CREATE TABLE IF NOT EXISTS anomaly_streaks (
+                dataset      VARCHAR NOT NULL,
+                stage        VARCHAR NOT NULL,
+                metric       VARCHAR NOT NULL,
+                streak       INTEGER NOT NULL,
+                last_run_id  VARCHAR NOT NULL,
+                PRIMARY KEY (dataset, stage, metric)
+            )
+            """,
         ]
         for ddl in ddl_statements:
             self.con.execute(ddl)
         logger.info("SentinelStore tables initialised at %s", self.db_path)
+
+    # ── Batch data (warehouse tables) ──────────────────────────────────────
+
+    @staticmethod
+    def _safe_table(name: str) -> str:
+        """Whitelist a stage name to a safe DuckDB identifier.
+
+        Stage names come from our own pipeline config, but we sanitise anyway
+        so the dynamic ``CREATE TABLE`` can never be an injection vector.
+        """
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+            raise ValueError(f"Unsafe table name: {name!r}")
+        return name
+
+    def save_batch(self, stage: str, run_id: str, batch: "pd.DataFrame") -> None:
+        """Persist a stage's batch rows to a warehouse table tagged with run_id.
+
+        Each stage gets its own table (named after the stage).  A ``run_id``
+        column is added so a later :class:`~action.executor.ActionExecutor`
+        can quarantine exactly the rows produced by one run.
+        """
+        table = self._safe_table(stage)
+        df = batch.copy()
+        df["run_id"] = run_id
+
+        # Register the DataFrame and create/append using DuckDB's pandas bridge.
+        self.con.register("_incoming_batch", df)
+        self.con.execute(
+            f"CREATE TABLE IF NOT EXISTS {table} AS SELECT * FROM _incoming_batch WHERE 1=0"
+        )
+        self.con.execute(f"INSERT INTO {table} SELECT * FROM _incoming_batch")
+        self.con.unregister("_incoming_batch")
+        logger.debug("Saved %d rows to warehouse table '%s' (run=%s)", len(df), table, run_id)
+
+    def get_batch(self, stage: str, run_id: str) -> "pd.DataFrame":
+        """Return the rows of *stage* produced by *run_id* (empty if none)."""
+        table = self._safe_table(stage)
+        try:
+            return self.con.execute(
+                f"SELECT * FROM {table} WHERE run_id = ?", [run_id]
+            ).fetchdf()
+        except duckdb.CatalogException:
+            return pd.DataFrame()
 
     # ── RunMetrics ─────────────────────────────────────────────────────────
 
@@ -299,3 +355,46 @@ class SentinelStore:
             """,
             [o.incident_id, o.resolved, o.model_dump_json(by_alias=True)],
         )
+
+    # ── Anomaly streaks (debounce, Section 11) ──────────────────────────────
+
+    def get_anomaly_streaks(self, dataset: str, stage: str) -> dict[str, int]:
+        """Return ``{metric: streak}`` for a (dataset, stage) pair."""
+        rows = self.con.execute(
+            "SELECT metric, streak FROM anomaly_streaks WHERE dataset = ? AND stage = ?",
+            [dataset, stage],
+        ).fetchall()
+        return {metric: streak for metric, streak in rows}
+
+    def set_anomaly_streak(
+        self, dataset: str, stage: str, metric: str, streak: int, run_id: str
+    ) -> None:
+        """Upsert the consecutive-anomaly streak for a metric."""
+        self.con.execute(
+            """
+            INSERT INTO anomaly_streaks (dataset, stage, metric, streak, last_run_id)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (dataset, stage, metric)
+            DO UPDATE SET streak = EXCLUDED.streak, last_run_id = EXCLUDED.last_run_id
+            """,
+            [dataset, stage, metric, streak, run_id],
+        )
+
+    def clear_anomaly_streaks(
+        self, dataset: str, stage: str, keep_metrics: List[str]
+    ) -> None:
+        """Reset streaks for metrics in (dataset, stage) that are NOT in
+        *keep_metrics* — i.e. metrics that were not anomalous this run, so
+        their consecutive streak is broken."""
+        if keep_metrics:
+            placeholders = ", ".join("?" for _ in keep_metrics)
+            self.con.execute(
+                f"DELETE FROM anomaly_streaks WHERE dataset = ? AND stage = ? "
+                f"AND metric NOT IN ({placeholders})",
+                [dataset, stage, *keep_metrics],
+            )
+        else:
+            self.con.execute(
+                "DELETE FROM anomaly_streaks WHERE dataset = ? AND stage = ?",
+                [dataset, stage],
+            )

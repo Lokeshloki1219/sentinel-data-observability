@@ -8,7 +8,7 @@ Sandboxed to orchestrator + warehouse operations only.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 import duckdb
@@ -57,7 +57,7 @@ class ActionExecutor:
             result = handler(target, run_id)
             result["success"] = True
             result["action_type"] = action_type.value
-            result["executed_at"] = datetime.utcnow().isoformat()
+            result["executed_at"] = datetime.now(timezone.utc).isoformat()
             logger.info("Action executed: %s target=%s run=%s", action_type.value, target, run_id)
             return result
         except Exception as exc:
@@ -95,7 +95,7 @@ class ActionExecutor:
             result = handler(target, run_id)
             result["success"] = True
             result["action_type"] = action_type.value
-            result["undone_at"] = datetime.utcnow().isoformat()
+            result["undone_at"] = datetime.now(timezone.utc).isoformat()
             logger.info("Action undone: %s target=%s run=%s", action_type.value, target, run_id)
             return result
         except Exception as exc:

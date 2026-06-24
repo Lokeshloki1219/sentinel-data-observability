@@ -9,11 +9,16 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+
+
+def _utcnow() -> datetime:
+    """Timezone-aware UTC now (replaces the deprecated ``datetime.utcnow``)."""
+    return datetime.now(timezone.utc)
 
 
 # ── Enums ──────────────────────────────────────────────────────────────────
@@ -303,7 +308,7 @@ class Resolution(BaseModel):
     modified_action: Optional[ActionDefinition] = None
     manual_fix_note: Optional[str] = None
     decided_by: str = "human"
-    decided_at: datetime = Field(default_factory=datetime.utcnow)
+    decided_at: datetime = Field(default_factory=_utcnow)
 
 
 # ── 7.10 Outcome ─────────────────────────────────────────────────────────
@@ -332,14 +337,14 @@ class SuppressionRule(BaseModel):
     effect: SuppressionEffect = SuppressionEffect.suppress
     param: Optional[float] = None
     created_from_incident: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 # ── 7.13 AuditEntry ──────────────────────────────────────────────────────
 
 class AuditEntry(BaseModel):
     entry_id: str
-    ts: datetime = Field(default_factory=datetime.utcnow)
+    ts: datetime = Field(default_factory=_utcnow)
     incident_id: Optional[str] = None
     event: AuditEvent
     actor: ActorType = ActorType.system

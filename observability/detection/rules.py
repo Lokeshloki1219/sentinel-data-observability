@@ -20,6 +20,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
+from config import config
 from schemas import (
     Anomaly,
     CheckType,
@@ -29,7 +30,6 @@ from schemas import (
     SeverityLevel,
 )
 from observability.detection.statistical import (
-    compute_ks_test,
     compute_psi,
     compute_zscore,
 )
@@ -146,25 +146,14 @@ def check_volume(
     Uses either the explicit ``intent.expected_volume`` bounds or a
     rolling z-score computed from *history*.
     """
-    # Absolute bounds check
+    # Absolute bounds check (spec §11: anomaly if row_count outside bounds).
     ev = intent.expected_volume
     if ev is not None:
-        if metrics.row_count < ev.min_rows:
-            deviation = (ev.min_rows - metrics.row_count) / max(ev.min_rows, 1)
-            severity = _severity_from_deviation(deviation * 5, intent.criticality)
-            return _make_anomaly(
-                run_id=metrics.run_id,
-                dataset=metrics.dataset,
-                stage=metrics.stage,
-                metric="row_count",
-                check_type=CheckType.volume,
-                observed=metrics.row_count,
-                expected={"min": ev.min_rows, "max": ev.max_rows},
-                deviation=round(deviation, 4),
-                severity=severity,
-            )
-        if metrics.row_count > ev.max_rows:
-            deviation = (metrics.row_count - ev.max_rows) / max(ev.max_rows, 1)
+        if metrics.row_count < ev.min_rows or metrics.row_count > ev.max_rows:
+            if metrics.row_count < ev.min_rows:
+                deviation = (ev.min_rows - metrics.row_count) / max(ev.min_rows, 1)
+            else:
+                deviation = (metrics.row_count - ev.max_rows) / max(ev.max_rows, 1)
             severity = _severity_from_deviation(deviation * 5, intent.criticality)
             return _make_anomaly(
                 run_id=metrics.run_id,
@@ -178,14 +167,16 @@ def check_volume(
                 severity=severity,
             )
 
-    # Statistical z-score check against history
-    if len(history) < 2:
+    # Statistical z-score check against history (spec §11: OR |z| ≥ 3).
+    # Runs even when bounds are configured, so a large relative swing that
+    # stays within the absolute bounds is still caught.
+    if len(history) < config.MIN_BASELINE:
         return None
 
     hist_counts = [float(h.row_count) for h in history]
     z = compute_zscore(float(metrics.row_count), hist_counts)
 
-    if abs(z) < 2.0:
+    if abs(z) < 3.0:  # spec §11: anomaly if |z| ≥ 3
         return None
 
     severity = _severity_from_deviation(z, intent.criticality)
@@ -241,10 +232,10 @@ def check_null_rate(
         hist_rates = [
             h.null_rate.get(col, 0.0) for h in history if col in h.null_rate
         ]
-        if len(hist_rates) < 2:
+        if len(hist_rates) < config.MIN_BASELINE:
             continue
         z = compute_zscore(rate, hist_rates)
-        if abs(z) < 2.0:
+        if abs(z) < 3.0:  # spec §11: anomaly if |z| ≥ 3
             continue
         severity = _severity_from_deviation(z, intent.criticality)
         anomalies.append(
@@ -281,8 +272,8 @@ def check_schema(
 
     current_cols = {c.name for c in metrics.schema_}
     prev_cols = {c.name for c in prev_metrics.schema_}
-    added = current_cols - prev_cols
-    removed = prev_cols - current_cols
+    added = sorted(current_cols - prev_cols)
+    removed = sorted(prev_cols - current_cols)
 
     return _make_anomaly(
         run_id=metrics.run_id,
@@ -290,8 +281,8 @@ def check_schema(
         stage=metrics.stage,
         metric="schema_hash",
         check_type=CheckType.schema,
-        observed=metrics.schema_hash,
-        expected=prev_metrics.schema_hash,
+        observed={"hash": metrics.schema_hash, "added": added, "removed": removed},
+        expected={"hash": prev_metrics.schema_hash},
         deviation=1.0,
         severity=SeverityLevel.high,
     )
@@ -311,28 +302,31 @@ def check_distribution(
     """
     anomalies: List[Anomaly] = []
 
-    if len(history) < 2:
+    if len(history) < config.MIN_BASELINE:
         return anomalies
 
-    # ── Numeric distribution shift via z-score on stats ────────────────
+    # ── Numeric distribution shift via z-score on the MEDIAN ───────────
+    # The median (p50) is used instead of the mean because key numeric
+    # columns here (balances, amount) are heavy-tailed log-normal; their
+    # batch mean is noisy run-to-run and produces false positives, whereas
+    # the median is stable and still moves under a real distribution shift.
     for col in key_columns:
         cur_stats = metrics.numeric_stats.get(col)
         if cur_stats is None:
             continue
 
-        hist_means = [
-            h.numeric_stats[col].mean
+        hist_medians = [
+            h.numeric_stats[col].p50
             for h in history
             if col in h.numeric_stats
         ]
-        if len(hist_means) < 2:
+        if len(hist_medians) < config.MIN_BASELINE:
             continue
 
-        z = compute_zscore(cur_stats.mean, hist_means)
-        if abs(z) < 2.5:
+        z = compute_zscore(cur_stats.p50, hist_medians)
+        if abs(z) < 3.0:  # spec §11: treat a ≥3σ median shift as drift
             continue
 
-        # Approximate severity from the deviation
         severity = _severity_from_deviation(z, Criticality.medium)
         anomalies.append(
             _make_anomaly(
@@ -341,8 +335,8 @@ def check_distribution(
                 stage=metrics.stage,
                 metric=f"distribution.{col}",
                 check_type=CheckType.distribution,
-                observed=round(cur_stats.mean, 4),
-                expected=round(float(np.mean(hist_means)), 4),
+                observed=round(cur_stats.p50, 4),
+                expected=round(float(np.median(hist_medians)), 4),
                 deviation=round(z, 4),
                 severity=severity,
             )
@@ -369,10 +363,10 @@ def check_distribution(
         baseline = {k: v / count for k, v in baseline.items()}
 
         psi = compute_psi(cur_dist, baseline)
-        if psi < 0.10:
+        if psi < 0.20:  # spec §11: anomaly if PSI ≥ 0.2
             continue
 
-        deviation = psi / 0.10  # normalise so 0.10 → 1.0
+        deviation = psi / 0.20  # normalise so the 0.20 threshold → 1.0
         severity = _severity_from_deviation(deviation, Criticality.medium)
         anomalies.append(
             _make_anomaly(

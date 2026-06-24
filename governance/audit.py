@@ -12,7 +12,7 @@ proposed action, decision, who/when, and outcome."
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from schemas import (
@@ -54,7 +54,7 @@ def log_event(
     """
     entry = AuditEntry(
         entry_id=str(uuid.uuid4()),
-        ts=datetime.utcnow(),
+        ts=datetime.now(timezone.utc),
         incident_id=incident_id,
         event=event,
         actor=actor,

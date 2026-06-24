@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from functools import lru_cache
 
@@ -36,9 +37,15 @@ class Config:
 
     # Detection defaults
     BASELINE_WINDOW: int = 30           # N past runs for rolling baseline
+    MIN_BASELINE: int = 5               # min history before statistical checks fire
     DEBOUNCE_RUNS: int = 2              # consecutive anomalous runs to escalate low/medium
     AUTO_RESOLVE_K: int = 3             # K runs to confirm fix
     MEMORY_TOP_K: int = 5               # similar incidents to retrieve
+
+    # PaySim time axis: `step` is an hourly index. We anchor it to a fixed
+    # epoch so a batch's business event-time (and therefore freshness) can be
+    # derived deterministically from the data itself.
+    STEP_EPOCH: datetime = datetime(2024, 1, 1, tzinfo=timezone.utc)
 
     # Paths
     PROJECT_ROOT: Path = _PROJECT_ROOT

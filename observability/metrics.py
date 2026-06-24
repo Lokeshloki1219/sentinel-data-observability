@@ -9,12 +9,13 @@ distribution summaries, and categorical frequency tables.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
-from typing import Dict, List
+from datetime import datetime, timedelta, timezone
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 
+from config import config
 from schemas import ColumnSchema, NumericStats, RunMetrics
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ def compute_metrics(
     stage: str,
     batch: pd.DataFrame,
     key_columns: List[str],
+    reference_now: Optional[datetime] = None,
 ) -> RunMetrics:
     """Compute a full :class:`RunMetrics` snapshot for *batch*.
 
@@ -42,13 +44,19 @@ def compute_metrics(
     key_columns : list[str]
         Columns to include in null-rate, numeric-stats, and categorical-dist
         profiling.  Typically sourced from ``IntentConfig.key_columns``.
+    reference_now : datetime, optional
+        The "now" against which freshness is measured.  The pipeline passes a
+        synthetic clock derived from the batch's ``step`` axis so freshness is
+        deterministic and reproducible.  Defaults to wall-clock UTC.
 
     Returns
     -------
     RunMetrics
         Fully populated metrics snapshot.
     """
-    now = datetime.now(tz=timezone.utc)
+    now = reference_now or datetime.now(tz=timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
 
     # ── Row count ──────────────────────────────────────────────────────
     row_count: int = len(batch)
@@ -117,12 +125,26 @@ def compute_metrics(
 
 
 def _compute_event_time_max(batch: pd.DataFrame, fallback: datetime) -> datetime:
-    """Attempt to find the maximum event-time in *batch*.
+    """Determine the maximum business event-time in *batch*.
 
-    Heuristic: looks for columns whose name contains ``time``, ``date``, or
-    ``ts`` and tries to parse them as datetimes.  Returns *fallback* if
-    nothing works.
+    Resolution order:
+
+    1. **PaySim ``step`` axis** — ``step`` is an integer hourly index, so the
+       latest business timestamp is ``STEP_EPOCH + max(step) hours``.  This is
+       what makes freshness (and the ``stale_data`` fault, which shifts
+       ``step`` backwards) observable.
+    2. **Datetime columns** — any column whose name contains ``time``/``date``/
+       ``ts``/``_at`` is parsed and its max taken.
+    3. **Fallback** — *fallback* (the reference "now") when neither applies.
     """
+    # 1. PaySim step axis (preferred for this pipeline).
+    if "step" in batch.columns:
+        steps = pd.to_numeric(batch["step"], errors="coerce").dropna()
+        if not steps.empty:
+            max_step = int(steps.max())
+            return config.STEP_EPOCH + timedelta(hours=max_step)
+
+    # 2. Explicit datetime columns.
     candidate_cols = [
         c
         for c in batch.columns
@@ -136,4 +158,6 @@ def _compute_event_time_max(batch: pd.DataFrame, fallback: datetime) -> datetime
                 return max_val.to_pydatetime()
         except Exception:
             continue
+
+    # 3. Fallback.
     return fallback

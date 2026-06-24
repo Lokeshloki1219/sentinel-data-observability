@@ -20,12 +20,11 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Tuple
 
 from config import config
 from schemas import (
     Anomaly,
-    CheckType,
     IntentConfig,
     RunMetrics,
     SeverityLevel,
@@ -138,45 +137,58 @@ def debounce(
     history: List[RunMetrics],
     store: SentinelStore,
 ) -> List[Anomaly]:
-    """Apply debounce logic to raw anomalies.
+    """Apply debounce logic to raw anomalies (spec §11).
 
     *   **high / critical** → escalate immediately.
-    *   **low / medium**    → escalate only if the *same metric* was
-        also anomalous in the immediately preceding run (i.e. 2
-        consecutive anomalous runs are required).
+    *   **low / medium**    → escalate only after the *same metric* has been
+        anomalous for ``config.DEBOUNCE_RUNS`` (default 2) consecutive runs.
 
-    The look-back is implemented by checking whether an open incident
-    already exists for the same ``(dataset, metric)`` pair.  This avoids
-    re-running detection on the previous run; the presence of an open
-    incident is a reliable proxy for "was anomalous last time".
+    Consecutive-run state is tracked in the ``anomaly_streaks`` table rather
+    than inferred from open incidents (the previous approach could never
+    escalate a low/medium anomaly, because no record of a non-escalated
+    anomaly was ever persisted).  Each call:
 
-    For runs without prior incidents we fall back to a simple heuristic:
-    the first occurrence of a low/medium anomaly is *not* escalated.
+    1. increments the streak for every metric anomalous *this* run,
+    2. resets the streak for metrics that were anomalous before but not now.
+
+    All anomalies in *anomalies* are assumed to share one (dataset, stage) —
+    which holds because detection runs per (run, stage).
     """
+    if not anomalies:
+        return []
+
+    dataset = anomalies[0].dataset
+    stage = anomalies[0].stage
+    threshold = config.DEBOUNCE_RUNS
+
+    prior_streaks = store.get_anomaly_streaks(dataset, stage)
+    current_metrics = [a.metric for a in anomalies]
+
+    # Break streaks for metrics that recovered (anomalous before, not now).
+    store.clear_anomaly_streaks(dataset, stage, keep_metrics=current_metrics)
+
     escalated: List[Anomaly] = []
-
-    # Cache of previously anomalous metrics from open incidents
-    open_incidents = store.get_open_incidents()
-    prev_anomalous_metrics: Set[Tuple[str, str]] = set()
-    for inc in open_incidents:
-        for a in inc.anomalies:
-            prev_anomalous_metrics.add((a.dataset, a.metric))
-
     for anomaly in anomalies:
+        new_streak = prior_streaks.get(anomaly.metric, 0) + 1
+        store.set_anomaly_streak(
+            dataset, stage, anomaly.metric, new_streak, anomaly.run_id
+        )
+
         if anomaly.severity_hint in (SeverityLevel.high, SeverityLevel.critical):
             anomaly.escalated = True
             escalated.append(anomaly)
+        elif new_streak >= threshold:
+            anomaly.escalated = True
+            escalated.append(anomaly)
         else:
-            key = (anomaly.dataset, anomaly.metric)
-            if key in prev_anomalous_metrics:
-                anomaly.escalated = True
-                escalated.append(anomaly)
-            else:
-                logger.debug(
-                    "Debounced (first occurrence): %s / %s",
-                    anomaly.dataset,
-                    anomaly.metric,
-                )
+            logger.debug(
+                "Debounced (%s/%s streak=%d < %d): %s",
+                dataset,
+                stage,
+                new_streak,
+                threshold,
+                anomaly.metric,
+            )
 
     return escalated
 
@@ -211,7 +223,10 @@ def drop_suppressed(
                 rule.match.check_type == anomaly.check_type.value
                 or rule.match.check_type == "*"
             )
-            if metric_match and type_match and rule.effect.value == "suppress":
+            if not (metric_match and type_match):
+                continue
+
+            if rule.effect.value == "suppress":
                 logger.info(
                     "Suppressed anomaly %s by rule %s",
                     anomaly.anomaly_id,
@@ -219,6 +234,20 @@ def drop_suppressed(
                 )
                 suppressed = True
                 break
+
+            # raise_threshold: drop the anomaly unless its deviation now
+            # exceeds the raised threshold carried in rule.param.
+            if rule.effect.value == "raise_threshold" and rule.param is not None:
+                if abs(anomaly.deviation) < rule.param:
+                    logger.info(
+                        "Anomaly %s below raised threshold %.3f (rule %s) — dropped",
+                        anomaly.anomaly_id,
+                        rule.param,
+                        rule.rule_id,
+                    )
+                    suppressed = True
+                    break
+
         if not suppressed:
             kept.append(anomaly)
 
