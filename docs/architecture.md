@@ -62,7 +62,7 @@ flowchart LR
     R --> P["Propose<br/>(incident report + suggested action)"]
     P --> A{"Resolve?<br/>(human, gated by risk tier)"}
     A -->|approve / modify| ACT["Act<br/>(reversible action)"]
-    A -->|reject (reason-coded)| MEM["Remember<br/>(suppression / manual note / negative signal)"]
+    A -->|"reject (reason-coded)"| MEM["Remember<br/>(suppression / manual note / negative signal)"]
     ACT --> MEM
     MEM --> W["Watch next runs"]
     W -->|metric back to baseline| AUTO["Auto-resolve<br/>(Outcome + MemoryRecord)"]
