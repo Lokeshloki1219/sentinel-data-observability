@@ -1,0 +1,74 @@
+[project]
+name = "sentinel"
+version = "0.1.0"
+description = "Agentic data-pipeline observability system"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    # --- Core ---
+    "pydantic>=2.7,<3",
+    "python-dotenv>=1.0,<2",
+    "pyyaml>=6.0,<7",
+
+    # --- Data & Pipeline ---
+    "pandas>=2.2,<3",
+    "duckdb>=1.1,<2",
+    "numpy>=1.26,<2",
+
+    # --- Anomaly Detection / Statistics ---
+    "scipy>=1.13,<2",
+    "statsmodels>=0.14,<1",
+
+    # --- LLM ---
+    "anthropic>=0.52,<1",
+
+    # --- Embeddings (GPU-accelerated) ---
+    "sentence-transformers>=3.0,<4",
+    "chromadb>=1.0,<2",
+
+    # --- Dashboard ---
+    "streamlit>=1.37,<2",
+    "plotly>=5.22,<6",
+
+    # --- Routing ---
+    "requests>=2.32,<3",
+
+    # --- Dev / Testing ---
+    "pytest>=8.2,<9",
+    "ruff>=0.5,<1",
+]
+
+[project.optional-dependencies]
+gpu = [
+    "torch>=2.3,<3",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = [
+    "intent",
+    "pipeline",
+    "observability",
+    "memory",
+    "reasoning",
+    "action",
+    "governance",
+    "routing",
+    "dashboard",
+    "evaluation",
+    "tests",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

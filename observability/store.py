@@ -1,0 +1,301 @@
+"""
+Sentinel — DuckDB Persistence Layer.
+
+Provides :class:`SentinelStore`, the single read/write gateway for every
+persistent artefact in the Sentinel observability system.  All tables use a
+``data`` JSON column that holds the full Pydantic-serialised model so that
+the schema can evolve without DDL migrations.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import List, Optional
+
+import duckdb
+
+from schemas import (
+    AuditEntry,
+    Incident,
+    OperationalSignals,
+    Outcome,
+    Resolution,
+    RunMetrics,
+    SuppressionRule,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class SentinelStore:
+    """DuckDB-backed store for all Sentinel observability data.
+
+    Parameters
+    ----------
+    db_path : str
+        Filesystem path to the DuckDB database file.  Use ``":memory:"``
+        for ephemeral / test databases.
+    """
+
+    # ── lifecycle ──────────────────────────────────────────────────────────
+
+    def __init__(self, db_path: str) -> None:
+        self.db_path = db_path
+        self.con = duckdb.connect(db_path)
+        self._init_tables()
+
+    @property
+    def conn(self) -> duckdb.DuckDBPyConnection:
+        """Alias for ``self.con`` used by external modules."""
+        return self.con
+
+    def _init_tables(self) -> None:
+        """Create all required tables if they do not already exist."""
+        ddl_statements = [
+            # 1. run_metrics
+            """
+            CREATE TABLE IF NOT EXISTS run_metrics (
+                run_id    VARCHAR NOT NULL,
+                dataset   VARCHAR NOT NULL,
+                stage     VARCHAR NOT NULL,
+                ts_run    TIMESTAMP NOT NULL,
+                data      JSON NOT NULL,
+                PRIMARY KEY (run_id, stage)
+            )
+            """,
+            # 2. ops_signals
+            """
+            CREATE TABLE IF NOT EXISTS ops_signals (
+                run_id    VARCHAR NOT NULL,
+                job_name  VARCHAR NOT NULL,
+                status    VARCHAR NOT NULL,
+                data      JSON NOT NULL,
+                PRIMARY KEY (run_id, job_name)
+            )
+            """,
+            # 3. incidents
+            """
+            CREATE TABLE IF NOT EXISTS incidents (
+                incident_id VARCHAR NOT NULL PRIMARY KEY,
+                dataset     VARCHAR NOT NULL,
+                stage       VARCHAR NOT NULL,
+                run_id      VARCHAR NOT NULL,
+                status      VARCHAR NOT NULL,
+                data        JSON NOT NULL
+            )
+            """,
+            # 4. audit_log
+            """
+            CREATE TABLE IF NOT EXISTS audit_log (
+                entry_id    VARCHAR NOT NULL PRIMARY KEY,
+                ts          TIMESTAMP NOT NULL,
+                incident_id VARCHAR,
+                event       VARCHAR NOT NULL,
+                actor       VARCHAR NOT NULL,
+                detail      JSON NOT NULL
+            )
+            """,
+            # 5. suppression_rules
+            """
+            CREATE TABLE IF NOT EXISTS suppression_rules (
+                rule_id    VARCHAR NOT NULL PRIMARY KEY,
+                dataset    VARCHAR NOT NULL,
+                metric     VARCHAR NOT NULL,
+                check_type VARCHAR NOT NULL,
+                effect     VARCHAR NOT NULL,
+                data       JSON NOT NULL
+            )
+            """,
+            # 6. resolutions
+            """
+            CREATE TABLE IF NOT EXISTS resolutions (
+                incident_id VARCHAR NOT NULL PRIMARY KEY,
+                decision    VARCHAR NOT NULL,
+                reason      VARCHAR NOT NULL,
+                data        JSON NOT NULL
+            )
+            """,
+            # 7. outcomes
+            """
+            CREATE TABLE IF NOT EXISTS outcomes (
+                incident_id VARCHAR NOT NULL PRIMARY KEY,
+                resolved    BOOLEAN NOT NULL,
+                data        JSON NOT NULL
+            )
+            """,
+        ]
+        for ddl in ddl_statements:
+            self.con.execute(ddl)
+        logger.info("SentinelStore tables initialised at %s", self.db_path)
+
+    # ── RunMetrics ─────────────────────────────────────────────────────────
+
+    def save_metrics(self, m: RunMetrics) -> None:
+        """Insert a new RunMetrics snapshot."""
+        self.con.execute(
+            """
+            INSERT INTO run_metrics (run_id, dataset, stage, ts_run, data)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            [m.run_id, m.dataset, m.stage, m.ts_run, m.model_dump_json(by_alias=True)],
+        )
+
+    def get_recent_metrics(
+        self, dataset: str, stage: str, n: int = 30
+    ) -> List[RunMetrics]:
+        """Return the *n* most recent RunMetrics for a (dataset, stage) pair.
+
+        Results are ordered newest-first so ``history[0]`` is the latest
+        previous run.
+        """
+        rows = self.con.execute(
+            """
+            SELECT data FROM run_metrics
+            WHERE dataset = ? AND stage = ?
+            ORDER BY ts_run DESC
+            LIMIT ?
+            """,
+            [dataset, stage, n],
+        ).fetchall()
+        return [RunMetrics.model_validate_json(row[0]) for row in rows]
+
+    # ── OperationalSignals ─────────────────────────────────────────────────
+
+    def save_ops_signals(self, s: OperationalSignals) -> None:
+        """Persist an OperationalSignals record."""
+        self.con.execute(
+            """
+            INSERT INTO ops_signals (run_id, job_name, status, data)
+            VALUES (?, ?, ?, ?)
+            """,
+            [s.run_id, s.job_name, s.status.value, s.model_dump_json(by_alias=True)],
+        )
+
+    def get_ops_signals(self, run_id: str) -> List[OperationalSignals]:
+        """Return all operational signals for a given run."""
+        rows = self.con.execute(
+            "SELECT data FROM ops_signals WHERE run_id = ?", [run_id]
+        ).fetchall()
+        return [OperationalSignals.model_validate_json(row[0]) for row in rows]
+
+    # ── Incidents ──────────────────────────────────────────────────────────
+
+    def save_incident(self, i: Incident) -> None:
+        """Insert a new Incident."""
+        self.con.execute(
+            """
+            INSERT INTO incidents (incident_id, dataset, stage, run_id, status, data)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                i.incident_id,
+                i.dataset,
+                i.stage,
+                i.run_id,
+                i.status.value,
+                i.model_dump_json(by_alias=True),
+            ],
+        )
+
+    def update_incident(self, i: Incident) -> None:
+        """Update an existing Incident (status changes, added report, etc.)."""
+        self.con.execute(
+            """
+            UPDATE incidents
+            SET status = ?, data = ?
+            WHERE incident_id = ?
+            """,
+            [i.status.value, i.model_dump_json(by_alias=True), i.incident_id],
+        )
+
+    def get_open_incidents(self) -> List[Incident]:
+        """Return all incidents that are not yet resolved or suppressed."""
+        rows = self.con.execute(
+            """
+            SELECT data FROM incidents
+            WHERE status NOT IN ('resolved', 'suppressed', 'report_invalid')
+            ORDER BY incident_id
+            """
+        ).fetchall()
+        return [Incident.model_validate_json(row[0]) for row in rows]
+
+    def get_incident(self, incident_id: str) -> Optional[Incident]:
+        """Fetch a single incident by ID, or ``None`` if not found."""
+        rows = self.con.execute(
+            "SELECT data FROM incidents WHERE incident_id = ?", [incident_id]
+        ).fetchall()
+        if not rows:
+            return None
+        return Incident.model_validate_json(rows[0][0])
+
+    # ── AuditEntry ─────────────────────────────────────────────────────────
+
+    def save_audit(self, e: AuditEntry) -> None:
+        """Append an entry to the immutable audit log."""
+        self.con.execute(
+            """
+            INSERT INTO audit_log (entry_id, ts, incident_id, event, actor, detail)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                e.entry_id,
+                e.ts,
+                e.incident_id,
+                e.event.value,
+                e.actor.value,
+                e.model_dump_json(by_alias=True),
+            ],
+        )
+
+    # ── SuppressionRules ───────────────────────────────────────────────────
+
+    def save_suppression_rule(self, r: SuppressionRule) -> None:
+        """Persist a new suppression rule."""
+        self.con.execute(
+            """
+            INSERT INTO suppression_rules (rule_id, dataset, metric, check_type, effect, data)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                r.rule_id,
+                r.dataset,
+                r.match.metric,
+                r.match.check_type,
+                r.effect.value,
+                r.model_dump_json(by_alias=True),
+            ],
+        )
+
+    def get_active_suppressions(self, dataset: str) -> List[SuppressionRule]:
+        """Return all suppression rules that apply to *dataset*."""
+        rows = self.con.execute(
+            "SELECT data FROM suppression_rules WHERE dataset = ?", [dataset]
+        ).fetchall()
+        return [SuppressionRule.model_validate_json(row[0]) for row in rows]
+
+    # ── Resolution / Outcome ───────────────────────────────────────────────
+
+    def save_resolution(self, r: Resolution) -> None:
+        """Persist a Resolution decision."""
+        self.con.execute(
+            """
+            INSERT INTO resolutions (incident_id, decision, reason, data)
+            VALUES (?, ?, ?, ?)
+            """,
+            [
+                r.incident_id,
+                r.decision.value,
+                r.reason.value,
+                r.model_dump_json(by_alias=True),
+            ],
+        )
+
+    def save_outcome(self, o: Outcome) -> None:
+        """Persist an Outcome record."""
+        self.con.execute(
+            """
+            INSERT INTO outcomes (incident_id, resolved, data)
+            VALUES (?, ?, ?)
+            """,
+            [o.incident_id, o.resolved, o.model_dump_json(by_alias=True)],
+        )

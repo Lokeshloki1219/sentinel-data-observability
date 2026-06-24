@@ -1,0 +1,73 @@
+- `[ ]` **Setup & Scaffolding**
+  - `[ ]` Initialize Python project (e.g. `uv init` or `poetry init`) in `s:\Sentinel`.
+  - `[ ]` Initialize git repository (`git init`) to track `code_version`.
+  - `[ ]` Configure `.env` parsing (`ANTHROPIC_API_KEY`, `SLACK_WEBHOOK_URL`, `SENTINEL_DB_URL`, `SENTINEL_ENV`) and create `.env.example`.
+  - `[ ]` Create directory structure matching the spec: `intent/`, `pipeline/`, `observability/`, `memory/`, `reasoning/`, `action/`, `governance/`, `dashboard/`, `routing/`, `evaluation/`, `tests/`, `docs/`.
+  - `[ ]` Create `README.md`.
+  - `[ ]` Define Pydantic models for all entities in `Sentinel_Technical_Spec.md` (Section 7).
+
+- `[ ]` **Milestone 1: Observe (Pipeline & Observability Core)**
+  - `[ ]` **Pipeline & Faults**
+    - `[ ]` `pipeline/ingest.py` & `pipeline/transform/`: Implement a synthetic "PaySim" pipeline.
+    - `[ ]` `pipeline/faults.py`: Implement fault injection harness.
+  - `[ ]` **Intent Layer**
+    - `[ ]` `intent/datasets/transactions.yaml`: Create the example configuration.
+    - `[ ]` Build parser to load YAML into `IntentConfig`.
+  - `[ ]` **Observability Store**
+    - `[ ]` `observability/store.py`: Initialize DuckDB. Write schemas for: `metrics`, `ops_signals`, `incidents`, `audit`, **and** `SuppressionRule`, `Resolution`, `Outcome`.
+  - `[ ]` **Metrics & Signals Collection**
+    - `[ ]` `observability/metrics.py`: Write function to compute `RunMetrics`.
+    - `[ ]` `observability/operational.py`: Write stub/scheduler loop to gather `OperationalSignals`.
+  - `[ ]` **Detection Engine**
+    - `[ ]` `observability/detection/statistical.py`: Implement baseline aggregations, z-scores, PSI/KS calculation.
+    - `[ ]` `observability/detection/rules.py`: Implement freshness and volume bounds logic.
+    - `[ ]` `observability/detection/engine.py`: Wire checks, map to `severity_hint`, and output `Anomaly` objects.
+    - `[ ]` `observability/detection/engine.py`: Implement `debounce` logic for low/medium anomalies.
+    - `[ ]` `observability/detection/engine.py`: Implement cost-control dedup (only escalate non-suppressed, per dataset/metric/run).
+  - `[ ]` **Dashboard Basics**
+    - `[ ]` `dashboard/app.py`: Build Streamlit app plotting metrics timeline and marking basic anomalies.
+
+- `[ ]` **Milestone 2: Reason (LLM Incident Generation)**
+  - `[ ]` **Context Assembly & Grouping**
+    - `[ ]` Implement `group_related(anomalies)` to bundle multiple metric deviations before reasoning.
+    - `[ ]` `reasoning/context.py`: Assemble `ReasoningContext`. Inject `code_version` (via git SHA).
+  - `[ ]` **Prompt Engineering & LLM Caller**
+    - `[ ]` `reasoning/prompts.py`: Define system prompt mapping LLM to Data Reliability Engineer.
+    - `[ ]` `reasoning/reporter.py`: Integrate Anthropic API (`claude-sonnet-4-6`). Handle JSON validation.
+  - `[ ]` **Incident Creation**
+    - `[ ]` `governance/audit.py`: Write `incident_created` and `report_generated` audit log functions.
+
+- `[ ]` **Milestone 3: Remember (Memory Layer)**
+  - `[ ]` **Vector Storage & Embedding**
+    - `[ ]` `memory/store.py`: Initialize vector DB (e.g., ChromaDB).
+    - `[ ]` `memory/embed.py`: Write text summarizer + embedding functions for incidents.
+  - `[ ]` **Retrieval & Integration**
+    - `[ ]` `memory/retrieve.py`: Fetch top-k `MemoryRecord`s. Must integrate **negative signals** for `wrong_diagnosis` resolutions.
+    - `[ ]` Pre-populate/bootstrap memory script via fault replays.
+
+- `[ ]` **Milestone 4: Act & Govern (Approval Gates, Routing & Fixes)**
+  - `[ ]` **Routing Layer**
+    - `[ ]` `routing/slack.py`: Implement Slack webhook client to send incident reports (only high/critical).
+  - `[ ]` **Action Registry & Executor**
+    - `[ ]` `action/registry.py`: Define `rerun_job`, `quarantine_batch`, `backfill`, `patch_data`, `alter_schema`.
+    - `[ ]` `action/executor.py`: Build `execute` and explicit `undo` (e.g., un-quarantine moving data back from quarantine table).
+  - `[ ]` **Governance Policies**
+    - `[ ]` `governance/policy.py`: Implement `action + criticality -> gate` mapping.
+  - `[ ]` **Resolution Routing (`governance/approval.py`)**
+    - `[ ]` Implement `not_a_problem` → Create SuppressionRule, loosen Intent, mark suppressed.
+    - `[ ]` Implement `will_fix_manually` → Store `manual_fix_note` to memory, mark `acknowledged_manual`.
+    - `[ ]` Implement `wrong_diagnosis` → Keep incident open, record negative signal to memory store.
+    - `[ ]` Implement `defer` → Mark `snoozed`.
+  - `[ ]` **Dashboard Controls**
+    - `[ ]` Add detailed incident reports and approval/rejection UI buttons to Streamlit. Add `action/preview.py` previews.
+  - `[ ]` **Suppression & Auto-Resolution**
+    - `[ ]` `governance/suppression.py`: Wire suppression logic.
+    - `[ ]` `governance/resolution.py`: Scan open incidents for K baseline returns. Resolve and write to memory.
+
+- `[ ]` **Evaluation & Testing**
+  - `[ ]` Unit Tests (`tests/test_*.py`): Core logic coverage.
+  - `[ ]` `evaluation/detection_metrics.py`: Calculate detection precision/recall/F1.
+  - `[ ]` `evaluation/attribution.py`: Calculate root-cause attribution accuracy.
+  - `[ ]` `evaluation/report_rubric.py`: Rubric / LLM-as-judge for report quality.
+  - `[ ]` `evaluation/memory_ablation.py`: Calculate memory ablation delta.
+  - `[ ]` `evaluation/run_experiments.py`: Orchestrate all evaluations using fault injection scenarios.

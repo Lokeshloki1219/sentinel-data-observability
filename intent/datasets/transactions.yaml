@@ -1,0 +1,37 @@
+# Sentinel IntentConfig — PaySim Transactions
+# Spec references: §7.1 (IntentConfig schema), §16 (Dataset specification)
+#
+# This file declares the SLA expectations for the PaySim synthetic
+# mobile-money transaction dataset.  Detection thresholds, severity
+# escalation, and reasoning prompts all derive from these values.
+
+dataset: transactions
+owner: data-engineering
+consumers:
+  - fraud-team
+  - analytics
+criticality: high
+
+# Schedule: every 6 hours (00:00, 06:00, 12:00, 18:00 UTC)
+expected_schedule_cron: '0 */6 * * *'
+freshness_sla_minutes: 360
+
+# Columns that drive null-rate and distribution checks
+key_columns:
+  - amount
+  - type
+  - oldbalanceOrg
+  - newbalanceOrig
+
+# Per-column null tolerance (0.0 = zero nulls allowed, 0.05 = up to 5%)
+accepted_null_pct:
+  amount: 0.0
+  oldbalanceOrg: 0.01
+  newbalanceOrig: 0.01
+  oldbalanceDest: 0.05
+  newbalanceDest: 0.05
+
+# Expected batch size range (volume check)
+expected_volume:
+  min_rows: 1000
+  max_rows: 500000
