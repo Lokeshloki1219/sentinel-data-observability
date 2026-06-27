@@ -44,6 +44,9 @@ class CheckType(str, Enum):
     schema = "schema"
     null_rate = "null_rate"
     distribution = "distribution"
+    validity = "validity"          # value out of plausible range
+    uniqueness = "uniqueness"      # duplicate rows on a key
+    operational = "operational"    # job failed/slow/retried (OOM, timeout, …)
 
 
 class SeverityLevel(str, Enum):
@@ -58,6 +61,7 @@ class CausedBy(str, Enum):
     upstream_job = "upstream_job"
     schema_change = "schema_change"
     pipeline_logic = "pipeline_logic"
+    infrastructure = "infrastructure"   # OOM / timeout / compute / resource exhaustion
     unknown = "unknown"
 
 
@@ -146,6 +150,11 @@ class ExpectedVolume(BaseModel):
     max_rows: int
 
 
+class ColumnRange(BaseModel):
+    min: float
+    max: float
+
+
 class IntentConfig(BaseModel):
     dataset: str
     owner: str
@@ -156,6 +165,11 @@ class IntentConfig(BaseModel):
     key_columns: List[str] = Field(default_factory=list)
     accepted_null_pct: Dict[str, float] = Field(default_factory=dict)
     expected_volume: Optional[ExpectedVolume] = None
+    # ── extended coverage (all optional; checks only fire when configured) ──
+    expected_ranges: Dict[str, ColumnRange] = Field(default_factory=dict)  # validity
+    unique_key: List[str] = Field(default_factory=list)                    # uniqueness
+    max_duration_seconds: Optional[float] = None                           # operational: timeout
+    max_retries: Optional[int] = None                                      # operational: retry storm
 
 
 # ── 7.2  RunMetrics ───────────────────────────────────────────────────────
@@ -188,6 +202,7 @@ class RunMetrics(BaseModel):
     null_rate: Dict[str, float] = Field(default_factory=dict)
     numeric_stats: Dict[str, NumericStats] = Field(default_factory=dict)
     categorical_dist: Dict[str, Dict[str, float]] = Field(default_factory=dict)
+    duplicate_rate: float = 0.0    # fraction of rows duplicated on the uniqueness key
 
     model_config = {"populate_by_name": True}
 

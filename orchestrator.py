@@ -116,11 +116,14 @@ def process_run(
             batch=batch,
             key_columns=intent.key_columns,
             reference_now=reference_now,
+            unique_key=intent.unique_key,
         )
 
         # Detect BEFORE persisting so the current run is not part of its own
         # rolling baseline (and schema diff compares against the true prev run).
-        anomalies = run_detection(metrics, store, intent)
+        # The stage's operational signal feeds OOM/timeout/slow/retry detection.
+        op_sig = manifest.get("operational_signals", {}).get(stage_name)
+        anomalies = run_detection(metrics, store, intent, op=op_sig)
 
         # Persist metrics + raw batch rows (the latter enables quarantine).
         store.save_metrics(metrics)

@@ -35,3 +35,23 @@ accepted_null_pct:
 expected_volume:
   min_rows: 1000
   max_rows: 500000
+
+# ── Extended coverage (all optional; checks only fire when configured) ──
+
+# Validity / range check — plausible value bounds per column.
+# Generous max (clean amounts never approach it); min 0 catches negatives.
+expected_ranges:
+  amount:
+    min: 0
+    max: 1000000000
+
+# Uniqueness check — rows must be unique on this composite key.
+unique_key:
+  - nameOrig
+  - nameDest
+  - amount
+  - step
+
+# Operational SLAs — drive timeout / retry-storm detection.
+max_duration_seconds: 30
+max_retries: 2

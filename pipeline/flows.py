@@ -57,6 +57,50 @@ _STAGES: list[tuple[str, Any, list[str]]] = [
 ]
 
 
+# Faults that touch ONLY the operational stream (no data corruption).
+_OPERATIONAL_ONLY = {"oom", "timeout", "slow_job", "retry_storm"}
+
+
+def _apply_operational_fault(
+    op_signals: Dict[str, "OperationalSignals"], fault_spec: "FaultSpec"
+) -> None:
+    """Mutate the targeted stage's OperationalSignals to simulate a job fault.
+
+    Covers ``operational_cause`` (failed/skipped, drives a downstream data
+    fault) plus the pure-operational faults: ``oom`` (exit 137), ``timeout``
+    (exit 124 + long duration), ``slow_job`` (success but duration spike), and
+    ``retry_storm`` (high retry count).
+    """
+    target = fault_spec.target
+    sig = op_signals[target]
+    ft = fault_spec.fault_type
+    params = fault_spec.params
+    base_dur = sig.duration_seconds or 3.0
+
+    if ft == "operational_cause":
+        status = (JobStatus.skipped if params.get("job_status") == "skipped"
+                  else JobStatus.failed)
+        upd = {"status": status,
+               "exit_code": 1 if status == JobStatus.failed else None,
+               "retries": 2 if status == JobStatus.failed else 0}
+    elif ft == "oom":
+        upd = {"status": JobStatus.failed, "exit_code": 137, "retries": 1}
+    elif ft == "timeout":
+        upd = {"status": JobStatus.failed, "exit_code": 124,
+               "duration_seconds": float(params.get("duration_seconds", base_dur * 30 + 90))}
+    elif ft == "slow_job":
+        # Above baseline but kept under a typical SLA so it reads as "slow",
+        # not "timeout".
+        upd = {"status": JobStatus.success,
+               "duration_seconds": float(params.get("duration_seconds", 24.0))}
+    elif ft == "retry_storm":
+        upd = {"status": JobStatus.success, "retries": int(params.get("retries", 5))}
+    else:
+        return
+
+    op_signals[target] = sig.model_copy(update=upd)
+
+
 def _make_op_signal(
     run_id: str,
     job_name: str,
@@ -143,14 +187,24 @@ def run_pipeline(
     fault_op_signal: Optional[OperationalSignals] = None
 
     if fault_spec is not None:
-        batch, fault_label = inject_fault(batch, fault_spec)
-        # Extract operational signal if this was an operational-cause fault
-        if (
-            fault_label
-            and fault_label.get("fault_type") == "operational_cause"
-            and "operational_signal" in fault_label
-        ):
-            fault_op_signal = fault_label.pop("operational_signal")
+        if fault_spec.fault_type in _OPERATIONAL_ONLY:
+            # Pure operational faults (OOM/timeout/slow/retry) don't corrupt data;
+            # they only mutate the target stage's operational signal (below).
+            fault_label = {
+                "fault_type": fault_spec.fault_type,
+                "target": fault_spec.target,
+                "params": fault_spec.params,
+                "caused_by": "infrastructure",
+            }
+        else:
+            batch, fault_label = inject_fault(batch, fault_spec)
+            # Extract operational signal if this was an operational-cause fault
+            if (
+                fault_label
+                and fault_label.get("fault_type") == "operational_cause"
+                and "operational_signal" in fault_label
+            ):
+                fault_op_signal = fault_label.pop("operational_signal")
         logger.info("Fault injected: %s", fault_label)
 
     # ── 3. Transform stages ────────────────────────────────────────────
@@ -195,6 +249,12 @@ def run_pipeline(
             upstream_jobs=upstream_jobs,
             exit_code=exit_code,
         )
+
+    # ── 3b. Operational faults: mutate the targeted stage's signal ─────────
+    # Make the operational failure visible on THIS run's ops stream (same
+    # pipeline run_id) so detection + the flow graph see it at the right node.
+    if fault_spec is not None and fault_spec.target in op_signals:
+        _apply_operational_fault(op_signals, fault_spec)
 
     # ── 4. Assemble manifest ───────────────────────────────────────────
     manifest: Dict[str, Any] = {

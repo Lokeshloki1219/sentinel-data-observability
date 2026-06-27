@@ -94,3 +94,80 @@ def test_destructive_actions_are_not_registered():
     assert not hasattr(ActionType, "alter_schema")
     # none / manual are no-ops, not blocked; unknown registered actions only via registry.
     assert is_blocked(ActionType.none) is False
+
+
+# ── extended coverage: validity / uniqueness / operational ─────────────────
+
+from datetime import datetime, timezone
+from schemas import (
+    IntentConfig, ColumnRange, NumericStats, RunMetrics, ColumnSchema,
+    OperationalSignals, JobStatus,
+)
+from observability.detection.rules import check_validity, check_uniqueness
+from observability.detection.operational import check_operational
+
+
+def _metrics(numeric_stats=None, duplicate_rate=0.0):
+    now = datetime.now(timezone.utc)
+    return RunMetrics(
+        run_id="r1", dataset="transactions", stage="raw_transactions", ts_run=now,
+        event_time_max=now, row_count=100, freshness_minutes=1.0, schema_hash="abc",
+        schema=[ColumnSchema(name="amount", dtype="float64")],
+        numeric_stats=numeric_stats or {}, duplicate_rate=duplicate_rate,
+    )
+
+
+def _intent(**kw):
+    base = dict(dataset="transactions", owner="x", criticality="high")
+    base.update(kw)
+    return IntentConfig(**base)
+
+
+def _ns(mn, mx):
+    return NumericStats(mean=0, std=1, p05=0, p50=0, p95=0, min=mn, max=mx)
+
+
+def test_validity_fires_on_out_of_range():
+    intent = _intent(expected_ranges={"amount": ColumnRange(min=0, max=1e9)})
+    # min below 0 → fires
+    anoms = check_validity(_metrics({"amount": _ns(-5.0, 100.0)}), intent)
+    assert len(anoms) == 1 and anoms[0].check_type.value == "validity"
+    # within range → no fire
+    assert check_validity(_metrics({"amount": _ns(10.0, 100.0)}), intent) == []
+
+
+def test_validity_silent_when_unconfigured():
+    assert check_validity(_metrics({"amount": _ns(-5.0, 100.0)}), _intent()) == []
+
+
+def test_uniqueness_fires_above_threshold():
+    intent = _intent(unique_key=["nameOrig", "amount"])
+    assert check_uniqueness(_metrics(duplicate_rate=0.3), intent).check_type.value == "uniqueness"
+    assert check_uniqueness(_metrics(duplicate_rate=0.0), intent) is None
+    # no key configured → never fires
+    assert check_uniqueness(_metrics(duplicate_rate=0.9), _intent()) is None
+
+
+def _op(status, exit_code=0, duration=3.0, retries=0):
+    now = datetime.now(timezone.utc)
+    return OperationalSignals(run_id="r1", job_name="enriched", status=JobStatus(status),
+                              started_at=now, ended_at=now, duration_seconds=duration,
+                              retries=retries, exit_code=exit_code)
+
+
+def test_operational_classifies_oom_and_timeout():
+    intent = _intent(max_duration_seconds=30, max_retries=2)
+    hist = [_op("success")] * 6
+    oom = check_operational(_op("failed", exit_code=137), hist, "transactions", intent)
+    assert any(a.metric == "operational.oom" for a in oom)
+    to = check_operational(_op("failed", exit_code=124, duration=180), hist, "transactions", intent)
+    assert any(a.metric == "operational.timeout" for a in to)
+
+
+def test_operational_retry_storm_and_clean():
+    intent = _intent(max_duration_seconds=30, max_retries=2)
+    hist = [_op("success")] * 6
+    rs = check_operational(_op("success", retries=5), hist, "transactions", intent)
+    assert any(a.metric == "operational.retry_storm" for a in rs)
+    # healthy job → no operational anomalies
+    assert check_operational(_op("success"), hist, "transactions", intent) == []

@@ -29,6 +29,11 @@ past incidents retrieved from memory.
 data faults.
 4. Reference concrete evidence from the provided context to justify your \
 root-cause conclusion.
+5. Read the operational signals carefully: a non-zero/abnormal exit_code, a \
+duration far above baseline, or many retries indicate an INFRASTRUCTURE / \
+resource problem (out-of-memory, timeout, compute pressure, API throttling). \
+Exit code 137 = OOM-kill; 124 = timeout. For these, set \
+"caused_by": "infrastructure".
 
 Your output MUST be exactly one JSON object — no preamble, no explanation, \
 no markdown fences, no trailing text.  The JSON object must have these \
@@ -37,7 +42,7 @@ exact fields:
 {
   "severity": "low | medium | high | critical",
   "likely_root_cause": "<concise description of the root cause>",
-  "caused_by": "data_source | upstream_job | schema_change | pipeline_logic | unknown",
+  "caused_by": "data_source | upstream_job | schema_change | pipeline_logic | infrastructure | unknown",
   "evidence": ["<evidence string 1>", "..."],
   "suggested_action": {
     "type": "rerun_job | quarantine_batch | backfill | none | manual",

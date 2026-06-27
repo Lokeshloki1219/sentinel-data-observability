@@ -262,6 +262,52 @@ def _inject_operational_cause(
     return corrupted, label
 
 
+def _inject_duplicate_rows(
+    df: pd.DataFrame, spec: FaultSpec, rng: np.random.Generator
+) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    """Append duplicate copies of rows (simulates a non-idempotent retry)."""
+    dup_pct = spec.params.get("dup_pct", 0.3)
+    n_dup = int(len(df) * dup_pct)
+    dup_idx = rng.choice(df.index, size=n_dup, replace=True)
+    corrupted = pd.concat([df, df.loc[dup_idx]], ignore_index=True)
+
+    label = {
+        "fault_type": "duplicate_rows",
+        "target": "rows",
+        "params": {"dup_pct": dup_pct, "rows_duplicated": n_dup},
+        "caused_by": CausedBy.pipeline_logic.value,
+    }
+    logger.info("Injected duplicate_rows: appended %d duplicate rows", n_dup)
+    return corrupted, label
+
+
+def _inject_out_of_range(
+    df: pd.DataFrame, spec: FaultSpec, rng: np.random.Generator
+) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    """Set a fraction of a numeric column to an impossible value."""
+    target_col = spec.target
+    pct = spec.params.get("pct", 0.1)
+    bad_value = spec.params.get("value", -1.0)
+
+    if target_col not in df.columns:
+        raise ValueError(f"Column '{target_col}' not found in DataFrame")
+
+    corrupted = df.copy()
+    n_bad = max(int(len(corrupted) * pct), 1)
+    bad_idx = rng.choice(corrupted.index, size=n_bad, replace=False)
+    corrupted.loc[bad_idx, target_col] = bad_value
+
+    label = {
+        "fault_type": "out_of_range",
+        "target": target_col,
+        "params": {"pct": pct, "value": bad_value, "rows_affected": n_bad},
+        "caused_by": CausedBy.data_source.value,
+    }
+    logger.info("Injected out_of_range: set %d rows of '%s' to %s",
+                n_bad, target_col, bad_value)
+    return corrupted, label
+
+
 # ── Dispatcher table ───────────────────────────────────────────────────────
 
 _INJECTORS = {
@@ -271,6 +317,8 @@ _INJECTORS = {
     "distribution_shift": _inject_distribution_shift,
     "stale_data": _inject_stale_data,
     "operational_cause": _inject_operational_cause,
+    "duplicate_rows": _inject_duplicate_rows,
+    "out_of_range": _inject_out_of_range,
 }
 
 

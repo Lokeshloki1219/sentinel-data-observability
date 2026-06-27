@@ -28,6 +28,7 @@ def compute_metrics(
     batch: pd.DataFrame,
     key_columns: List[str],
     reference_now: Optional[datetime] = None,
+    unique_key: Optional[List[str]] = None,
 ) -> RunMetrics:
     """Compute a full :class:`RunMetrics` snapshot for *batch*.
 
@@ -95,6 +96,13 @@ def compute_metrics(
                 max=float(series.max()),
             )
 
+    # ── Duplicate rate on the uniqueness key (0.0 if not configured) ───
+    duplicate_rate: float = 0.0
+    dup_cols = [c for c in (unique_key or []) if c in batch.columns]
+    if dup_cols and len(batch) > 0:
+        n_dups = int(batch.duplicated(subset=dup_cols, keep="first").sum())
+        duplicate_rate = n_dups / len(batch)
+
     # ── Categorical distributions for low-cardinality columns ──────────
     categorical_dist: Dict[str, Dict[str, float]] = {}
     for col in key_columns:
@@ -121,6 +129,7 @@ def compute_metrics(
         null_rate=null_rate,
         numeric_stats=numeric_stats,
         categorical_dist=categorical_dist,
+        duplicate_rate=duplicate_rate,
     )
 
 

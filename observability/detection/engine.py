@@ -20,12 +20,13 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from config import config
 from schemas import (
     Anomaly,
     IntentConfig,
+    OperationalSignals,
     RunMetrics,
     SeverityLevel,
     SuppressionRule,
@@ -36,8 +37,11 @@ from observability.detection.rules import (
     check_freshness,
     check_null_rate,
     check_schema,
+    check_uniqueness,
+    check_validity,
     check_volume,
 )
+from observability.detection.operational import check_operational
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +53,7 @@ def run_detection(
     metrics: RunMetrics,
     store: SentinelStore,
     intent: IntentConfig,
+    op: Optional[OperationalSignals] = None,
 ) -> List[Anomaly]:
     """Execute the full detection pipeline for one run.
 
@@ -60,6 +65,10 @@ def run_detection(
         Persistence layer used to fetch history and suppression rules.
     intent : IntentConfig
         Dataset-level configuration (thresholds, criticality, key cols).
+    op : OperationalSignals, optional
+        The stage's operational signal.  When provided, operational checks
+        (OOM/timeout/slow/retry) run in the *same* pass so all anomalies for
+        the (dataset, stage) share one debounce/suppress/dedup cycle.
 
     Returns
     -------
@@ -92,6 +101,20 @@ def run_detection(
     raw_anomalies.extend(
         check_distribution(metrics, history, intent.key_columns)
     )
+
+    raw_anomalies.extend(check_validity(metrics, intent))
+
+    uniq_anom = check_uniqueness(metrics, intent)
+    if uniq_anom:
+        raw_anomalies.append(uniq_anom)
+
+    # Operational checks (OOM/timeout/slow/retry) — same pass so they share the
+    # stage's debounce/suppress/dedup cycle.
+    if op is not None:
+        ops_history = store.get_recent_ops(op.job_name, config.BASELINE_WINDOW)
+        raw_anomalies.extend(
+            check_operational(op, ops_history, metrics.dataset, intent)
+        )
 
     if not raw_anomalies:
         logger.debug(

@@ -75,6 +75,12 @@ FAULT_SCENARIOS: List[Tuple[FaultSpec, str]] = [
         },
         seed=6,
     ), "upstream_job"),
+    # ── extended coverage ──
+    (FaultSpec(fault_type="duplicate_rows", target="", params={"dup_pct": 0.3}, seed=7), "pipeline_logic"),
+    (FaultSpec(fault_type="out_of_range", target="amount", params={"pct": 0.1, "value": -1.0}, seed=8), "data_source"),
+    (FaultSpec(fault_type="oom", target="enriched", params={}, seed=9), "infrastructure"),
+    (FaultSpec(fault_type="timeout", target="enriched", params={}, seed=10), "infrastructure"),
+    (FaultSpec(fault_type="retry_storm", target="cleaned_typed", params={"retries": 5}, seed=11), "infrastructure"),
 ]
 
 

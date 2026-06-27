@@ -234,6 +234,19 @@ class SentinelStore:
         ).fetchall()
         return [OperationalSignals.model_validate_json(row[0]) for row in rows]
 
+    def get_recent_ops(self, job_name: str, n: int = 30) -> List[OperationalSignals]:
+        """Return recent OperationalSignals for a job, newest-first.
+
+        Used as the rolling baseline for operational anomaly detection
+        (duration spikes, etc.).  Ordered by ``started_at`` descending.
+        """
+        rows = self.con.execute(
+            "SELECT data FROM ops_signals WHERE job_name = ?", [job_name]
+        ).fetchall()
+        sigs = [OperationalSignals.model_validate_json(r[0]) for r in rows]
+        sigs.sort(key=lambda s: s.started_at, reverse=True)
+        return sigs[:n]
+
     # ── Incidents ──────────────────────────────────────────────────────────
 
     def save_incident(self, i: Incident) -> None:
@@ -283,6 +296,32 @@ class SentinelStore:
         if not rows:
             return None
         return Incident.model_validate_json(rows[0][0])
+
+    def get_incidents_for_run(self, run_id: str) -> List[Incident]:
+        """Return all incidents created from a given pipeline run."""
+        rows = self.con.execute(
+            "SELECT data FROM incidents WHERE run_id = ?", [run_id]
+        ).fetchall()
+        return [Incident.model_validate_json(r[0]) for r in rows]
+
+    def get_recent_run_ids(self, dataset: str, n: int = 25) -> List[str]:
+        """Return recent distinct run_ids for a dataset, newest-first.
+
+        Ordered by the latest ``ts_run`` seen for each run so the dashboard's
+        run picker lists the most recent pipeline executions first.
+        """
+        rows = self.con.execute(
+            """
+            SELECT run_id, MAX(ts_run) AS last_ts
+            FROM run_metrics
+            WHERE dataset = ?
+            GROUP BY run_id
+            ORDER BY last_ts DESC
+            LIMIT ?
+            """,
+            [dataset, n],
+        ).fetchall()
+        return [r[0] for r in rows]
 
     # ── AuditEntry ─────────────────────────────────────────────────────────
 

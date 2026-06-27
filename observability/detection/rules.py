@@ -383,3 +383,82 @@ def check_distribution(
         )
 
     return anomalies
+
+
+# ── Validity / range check ────────────────────────────────────────────────
+
+
+def check_validity(
+    metrics: RunMetrics,
+    intent: IntentConfig,
+) -> List[Anomaly]:
+    """Detect values outside their configured plausible range (spec extension).
+
+    For each column in ``intent.expected_ranges``, fire if the batch's observed
+    min/max (from ``numeric_stats``) falls outside ``[min, max]`` — catching
+    impossible readings (negative amounts, sensor spikes, unit errors).
+    Only fires for columns that have an explicit range, so clean data with no
+    configured ranges never triggers it.
+    """
+    anomalies: List[Anomaly] = []
+    for col, rng in intent.expected_ranges.items():
+        stats = metrics.numeric_stats.get(col)
+        if stats is None:
+            continue
+        below = stats.min < rng.min
+        above = stats.max > rng.max
+        if not (below or above):
+            continue
+        # Deviation = how far the worst breach is, scaled by the range width.
+        width = max(rng.max - rng.min, 1e-9)
+        breach = max(rng.min - stats.min, stats.max - rng.max, 0.0)
+        deviation = breach / width
+        severity = _severity_from_deviation(max(deviation * 3, 3.0), intent.criticality)
+        anomalies.append(
+            _make_anomaly(
+                run_id=metrics.run_id,
+                dataset=metrics.dataset,
+                stage=metrics.stage,
+                metric=f"validity.{col}",
+                check_type=CheckType.validity,
+                observed={"min": round(stats.min, 2), "max": round(stats.max, 2)},
+                expected={"min": rng.min, "max": rng.max},
+                deviation=round(deviation, 4),
+                severity=severity,
+            )
+        )
+    return anomalies
+
+
+# ── Uniqueness / duplicate-row check ──────────────────────────────────────
+
+
+def check_uniqueness(
+    metrics: RunMetrics,
+    intent: IntentConfig,
+    threshold: float = 0.01,
+) -> Optional[Anomaly]:
+    """Detect duplicate rows on the configured uniqueness key (spec extension).
+
+    Fires only when ``intent.unique_key`` is set and ``metrics.duplicate_rate``
+    exceeds *threshold* — catching non-idempotent retries / blind-append
+    duplication.  No key configured → never fires.
+    """
+    if not intent.unique_key:
+        return None
+    if metrics.duplicate_rate <= threshold:
+        return None
+
+    deviation = metrics.duplicate_rate / max(threshold, 1e-9)
+    severity = _severity_from_deviation(deviation, intent.criticality)
+    return _make_anomaly(
+        run_id=metrics.run_id,
+        dataset=metrics.dataset,
+        stage=metrics.stage,
+        metric="uniqueness.duplicate_rate",
+        check_type=CheckType.uniqueness,
+        observed=round(metrics.duplicate_rate, 4),
+        expected=threshold,
+        deviation=round(deviation, 4),
+        severity=severity,
+    )
