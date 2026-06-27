@@ -70,6 +70,49 @@ flowchart LR
     W --> O
 ```
 
+## Pipeline data architecture (the live flow animation)
+
+The dashboard's **🔀 Pipeline Flow** tab animates this architecture: dense particles stream
+through the pipes, each stage glows by health, the two observability streams fan into the
+Detection engine, and an operational failure draws a dashed **caused‑by** link to the data
+error it produced.
+
+```mermaid
+flowchart LR
+    SRC["PaySim<br/>source"] -->|batch| RAW[raw_transactions] --> CLN[cleaned_typed] --> ENR[enriched] --> FRD[fraud_scoring_features] --> DW["DuckDB<br/>warehouse"]
+
+    subgraph OBS["Observability taps"]
+      direction LR
+      DM["data metrics<br/>(rows · nulls · schema · dist · range · dupes · freshness)"]
+      OPS["operational signals<br/>(status · duration · retries · exit code)"]
+    end
+
+    RAW -. profile .-> DM
+    CLN -. profile .-> DM
+    ENR -. profile .-> DM
+    FRD -. profile .-> DM
+    RAW -. job .-> OPS
+    CLN -. job .-> OPS
+    ENR -. job .-> OPS
+    FRD -. job .-> OPS
+    DM --> DET{{DETECTION<br/>+ debounce + suppression}}
+    OPS --> DET
+    ENR == "caused-by ➜" ==> FRD
+
+    classDef ok fill:#16341f,stroke:#22c55e,color:#d1fae5;
+    classDef data fill:#3a2a07,stroke:#f59e0b,color:#fde68a;
+    classDef ops fill:#3a0f12,stroke:#ef4444,color:#fecaca;
+    class SRC,RAW,CLN,DW ok;
+    class FRD data;
+    class ENR ops;
+```
+
+**Colour key:** 🟢 healthy · 🟠 data error (amber: a data check fired) · 🔴 pipeline error
+(red: the job failed/slowed/retried — OOM, timeout, compute, 429). The example shows the
+flagship case: `enriched` fails (🔴) → `fraud_scoring_features` data collapses (🟠), linked by
+the **caused‑by** arc. Drive it live with `python scripts/seed_demo.py` then
+`streamlit run dashboard/app.py`.
+
 ## Fidelity at a glance
 
 | # | Layer | Fidelity | Module |

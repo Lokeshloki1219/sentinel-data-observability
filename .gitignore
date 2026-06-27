@@ -23,5 +23,8 @@ chroma_data/
 Thumbs.db
 .DS_Store
 
-# Local-only internal docs
+# Local-only internal docs / dev artifacts
 AUDIT_REPORT.md
+implementation_plan.md
+task.md
+*.pdf

@@ -30,6 +30,68 @@ and the [design write-up](docs/writeup.md).
 
 `orchestrator.py` wires these into the full control loop (Spec §10).
 
+## What it detects
+
+Sentinel watches **two signal streams per stage** — the data produced (🟠 *data errors*) and
+the job that produced it (🔴 *pipeline errors*) — and **correlates** them.
+
+| Stream | Check | Catches | How |
+|---|---|---|---|
+| 🟠 Data | **Freshness** | late / stale data | `freshness_minutes` > SLA |
+| 🟠 Data | **Volume** | too few / too many rows | rolling z‑score ≥ 3 or outside bounds |
+| 🟠 Data | **Null‑rate** | completeness spikes | per‑column threshold or z ≥ 3 |
+| 🟠 Data | **Schema** | column added / removed / retyped | schema‑hash diff |
+| 🟠 Data | **Distribution** | value drift | PSI ≥ 0.2 / median z ≥ 3 |
+| 🟠 Data | **Validity / range** | impossible values (negatives, sensor spikes) | min/max vs configured range |
+| 🟠 Data | **Uniqueness** | duplicate rows / non‑idempotent retries | duplicate‑rate on a key |
+| 🔴 Ops | **OOM** | out‑of‑memory kill | job failed, exit code 137 |
+| 🔴 Ops | **Timeout** | hung / over‑SLA job | exit 124 or duration > SLA |
+| 🔴 Ops | **Slow / compute** | compute pressure, skew | duration z‑score spike |
+| 🔴 Ops | **Retry storm** | API throttling (429), instability | retries over ceiling |
+| 🔴 Ops | **Job failed / skipped** | upstream failure | orchestrator status |
+
+Operational signals are read from the job's `status / duration / retries / exit_code` — exactly
+how a real orchestrator (Prefect / Airflow / Spark) exposes them.
+
+**The differentiator — correlation:** when an upstream job failure *causes* a downstream data
+fault, Sentinel flags both and the LLM attributes `caused_by = upstream_job` / `infrastructure`,
+drawing the "caused‑by" link in the live flow graph.
+
+**Out of scope** (documented, not built): streaming‑runtime failures (backpressure, poison
+pills, rebalance storms), orchestration‑*engine* problems (circular DAGs), and subtle in‑range
+hardware corruption. Sentinel complements crash‑monitoring tools (Datadog / PagerDuty) — it
+catches *silent data* failures and correlates them with job state, rather than re‑alerting
+infrastructure crashes.
+
+## Live pipeline-flow animation
+
+The dashboard's **🔀 Pipeline Flow** tab renders the real data architecture as a live animated
+canvas: a batch streams through the stages, the broken stage glows, and the two error classes
+are colour‑coded with the cross‑signal correlation drawn in. Click **▶ Run a batch** (optionally
+injecting any fault) to watch detection happen in‑flight.
+
+```mermaid
+flowchart LR
+    SRC["PaySim<br/>source"] -->|batch| RAW[raw] --> CLN[cleaned] --> ENR[enriched] --> FRD[fraud_features] --> DW["DuckDB<br/>warehouse"]
+    RAW -. data metrics + ops signals .-> DET{{DETECTION}}
+    CLN -. taps .-> DET
+    ENR -. taps .-> DET
+    FRD -. taps .-> DET
+    ENR -. "🔴 job failed (OOM/timeout)" .-> DET
+    FRD -. "🟠 nulls / volume drop" .-> DET
+    ENR == "caused-by ➜" ==> FRD
+
+    classDef ok fill:#16341f,stroke:#22c55e,color:#d1fae5;
+    classDef data fill:#3a2a07,stroke:#f59e0b,color:#fde68a;
+    classDef ops fill:#3a0f12,stroke:#ef4444,color:#fecaca;
+    class SRC,RAW,CLN,DW ok;
+    class FRD data;
+    class ENR ops;
+```
+
+🟢 healthy · 🟠 data error · 🔴 pipeline error · ➜ caused‑by correlation. See
+[docs/architecture.md](docs/architecture.md) for the full diagrams.
+
 ## Quick start
 
 ```bash
