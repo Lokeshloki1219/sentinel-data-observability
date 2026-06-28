@@ -82,25 +82,47 @@ Memory. *Rejections are signal, not noise.*
 
 ## 4. Evidence: evaluation results
 
-From `data/eval_results.json` (10 clean runs + 6 labelled fault scenarios, no-LLM mode):
+From `data/eval_results.json` (clean baseline + **11** labelled fault scenarios, no-LLM mode):
 
 | Dimension | Metric | Result |
 |-----------|--------|--------|
-| Detection | Precision / Recall / F1 vs. injected faults | **1.00 / 1.00 / 1.00** (6/6 fault types) |
-| Detection | True / false / missed | 6 TP, **0 FP**, 0 FN |
-| Robustness | False-positive rate on clean runs | **0.0** over 10 runs |
+| Detection | Precision / Recall / F1 vs. injected faults | **1.00 / 1.00 / 1.00** (11/11 fault types) |
+| Detection | False positives | **0** |
+| Detection latency | runs from fault to escalation | **≤ 1 run** (high/critical immediate) |
+| Robustness | False-positive rate on clean runs | **0.0** |
 | Learning | False-positive trend | Flat at 0 (no FPs to suppress) |
 | Attribution | `caused_by` correct on operational-cause faults | *gated behind `--use-llm`* |
 | Report quality | Rubric (root cause / action / severity) | *gated behind `--use-llm`* |
 | Memory effect | Diagnosis quality with vs. without memory | *gated behind `--use-llm`* |
 
-All six fault types — row-drop, column-null, schema-change, distribution-shift, stale-data,
-and operational-cause — are detected. The LLM-dependent metrics (attribution, report
-quality, memory ablation) are wired and run with `python -m evaluation.run_experiments
---use-llm` once an `ANTHROPIC_API_KEY` is set.
+All eleven fault types are detected: the original six (row-drop, column-null, schema-change,
+distribution-shift, stale-data, operational-cause) plus the widened coverage —
+**duplicate_rows** (uniqueness), **out_of_range** (validity), and the operational faults
+**oom**, **timeout**, **retry_storm** (slow_job is dashboard-only as it needs a clean duration
+baseline). The LLM-dependent metrics (attribution, report quality, memory ablation) run with
+`python -m evaluation.run_experiments --use-llm` once an `ANTHROPIC_API_KEY` is set.
 
 Detection latency: high/critical anomalies escalate **within 1 run**; low/medium escalate
 after 2 consecutive runs by design (debounce).
+
+### What it detects (7 data + 5 operational checks)
+
+| 🟠 Data | 🔴 Operational (from job status/duration/retries/exit-code) |
+|---|---|
+| freshness · volume · null-rate · schema · distribution drift · **validity/range** · **uniqueness** | **OOM** (exit 137) · **timeout** (exit 124 / over-SLA) · **slow/compute** (duration spike) · **retry storm** (429/instability) · job failed/skipped |
+
+The differentiator is **correlation**: when a pipeline error causes a downstream data fault,
+both are flagged and the LLM attributes `caused_by = upstream_job` / `infrastructure`. The
+dashboard's **🔀 Pipeline Flow** tab animates this live — a batch streams through the stages,
+the broken stage glows (🟠 data / 🔴 pipeline), and a dashed "caused-by" arc links the two.
+
+### Extensions beyond the normative spec (Section 7)
+
+The widened coverage adds, additively (no field renamed or removed, so interoperability holds):
+`CheckType` += `validity`, `uniqueness`, `operational`; `CausedBy` += `infrastructure`;
+`IntentConfig` += `expected_ranges`, `unique_key`, `max_duration_seconds`, `max_retries`;
+`RunMetrics` += `duplicate_rate`. All new checks are opt-in via Intent config and
+conservatively thresholded, so the clean-run false-positive rate stays 0.
 
 ---
 

@@ -51,7 +51,8 @@ the job that produced it (🔴 *pipeline errors*) — and **correlates** them.
 | 🔴 Ops | **Job failed / skipped** | upstream failure | orchestrator status |
 
 Operational signals are read from the job's `status / duration / retries / exit_code` — exactly
-how a real orchestrator (Prefect / Airflow / Spark) exposes them.
+how a real orchestrator (Prefect / Airflow / Spark) exposes them. (Validity, uniqueness, and the
+operational checks **extend** the spec's normative five — additively and opt-in via Intent.)
 
 **The differentiator — correlation:** when an upstream job failure *causes* a downstream data
 fault, Sentinel flags both and the LLM attributes `caused_by = upstream_job` / `infrastructure`,

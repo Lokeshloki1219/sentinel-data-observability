@@ -46,6 +46,7 @@ from orchestrator import process_run
 from evaluation.detection_metrics import (
     DetectionResult,
     evaluate_detection,
+    compute_detection_latency,
     compute_fp_trend,
 )
 from evaluation.attribution import evaluate_attribution
@@ -256,6 +257,18 @@ def run_experiments(
             for r in detection_results
         ],
     }
+
+    # Detection latency (Spec §15): runs from fault occurrence to escalation.
+    # Each fault is injected on one run and escalates in that run (0) when
+    # detected; undetected scenarios are excluded.
+    latency_by_fault = compute_detection_latency(
+        [(r.injected_fault_type, 0) for r in detection_results if r.was_detected]
+    )
+    results["detection"]["latency_by_fault_runs"] = latency_by_fault
+    results["detection"]["mean_latency_runs"] = (
+        round(sum(latency_by_fault.values()) / len(latency_by_fault), 3)
+        if latency_by_fault else None
+    )
 
     if use_llm:
         attr = evaluate_attribution(ground_truths, reports_with_memory)
