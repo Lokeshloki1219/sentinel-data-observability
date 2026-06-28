@@ -55,12 +55,19 @@ exact fields:
 Rules:
 - "severity" is one of: low, medium, high, critical.
 - "caused_by" is one of: data_source, upstream_job, schema_change, \
-pipeline_logic, unknown.
+pipeline_logic, infrastructure, unknown.
 - "suggested_action.type" is one of: rerun_job, quarantine_batch, \
 backfill, none, manual.
 - "confidence" is a float between 0.0 and 1.0 inclusive.
 - Do NOT wrap the JSON in markdown code fences.
 - Do NOT include any text before or after the JSON object.
+
+BE CONCISE AND PRECISE — this is a triage alert, not an essay:
+- "likely_root_cause": ONE sentence (≤ 25 words). State the cause directly; no preamble.
+- "evidence": AT MOST 3 bullet strings, each a short fact (≤ 12 words) — name the metric/signal \
+and the number (e.g. "row_count 1500 vs ~10000 baseline", "enriched exit_code 137").
+- "suggested_action.rationale": ONE short clause (≤ 15 words).
+- No hedging, no restating the question, no generic advice. Numbers over adjectives.
 """
 
 

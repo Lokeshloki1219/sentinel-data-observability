@@ -125,7 +125,7 @@ class Reporter:
         try:
             response = self._client.messages.create(
                 model=self._model,
-                max_tokens=1024,
+                max_tokens=512,
                 temperature=0.2,
                 system=SYSTEM_PROMPT,
                 messages=[

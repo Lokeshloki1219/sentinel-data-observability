@@ -402,18 +402,23 @@ def _render_incident_card(
         f"`{incident.status.value}` | {incident.incident_id[:8]}",
         expanded=(incident.status in {IncidentStatus.open, IncidentStatus.awaiting_approval}),
     ):
-        # Header
-        c1, c2, c3 = st.columns([2, 1, 1])
-        c1.markdown(f"**Run:** `{incident.run_id}`")
-        c2.markdown(f"**Created:** {incident.created_at.strftime('%Y-%m-%d %H:%M')}")
-        c3.markdown(f"**Status:** `{incident.status.value}`")
+        # Header — stage where the issue was found + when it was detected.
+        # Use the anomaly's real detection wall-clock (created_at is the batch's
+        # synthetic business date, which always lands at midnight).
+        det_ts = incident.anomalies[0].detected_at if incident.anomalies else incident.created_at
+        c1, c2, c3, c4 = st.columns([1.2, 1.6, 1.6, 1])
+        c1.markdown(f"**Stage:** `{incident.stage}`")
+        c2.markdown(f"**Run:** `{incident.run_id}`")
+        c3.markdown(f"**Detected:** {det_ts.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+        c4.markdown(f"**Status:** `{incident.status.value}`")
 
-        # Anomalies
+        # Anomalies (with per-issue detection timestamp)
         if incident.anomalies:
-            st.markdown("**Anomalies:**")
+            st.markdown("**Issues found:**")
             for a in incident.anomalies:
                 st.markdown(
-                    f"- `{a.metric}` ({a.check_type.value}): "
+                    f"- `{a.metric}` ({a.check_type.value}) @ **{incident.stage}** · "
+                    f"{a.detected_at.strftime('%H:%M:%S')} — "
                     f"observed=`{a.observed}` expected=`{a.expected}` "
                     f"deviation=`{a.deviation:.2f}` severity=`{a.severity_hint.value}`"
                 )
