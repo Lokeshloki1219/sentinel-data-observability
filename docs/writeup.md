@@ -82,45 +82,44 @@ Memory. *Rejections are signal, not noise.*
 
 ## 4. Evidence: evaluation results
 
-From `data/eval_results.json` (clean baseline + **11** labelled fault scenarios, no-LLM mode):
+The **primary detection result is the graduated study** (`python -m evaluation.graduated`, also
+folded into `run_experiments` output) — the same detector run against faults at a *range of
+magnitudes* on a baseline with realistic ~2% volume variance. A single "perfect" number on
+obvious faults isn't evidence; a **degradation curve** is.
 
-| Dimension | Metric | Result |
-|-----------|--------|--------|
-| Detection | Precision / Recall / F1 vs. injected faults | **1.00 / 1.00 / 1.00** (11/11 fault types) |
-| Detection | False positives | **0** |
-| Detection latency | runs from fault to escalation | **≤ 1 run** (high/critical immediate) |
-| Robustness | False-positive rate on clean runs | **0.0** |
-| Learning | False-positive trend | Flat at 0 (no FPs to suppress) |
-| Attribution | `caused_by` correct on operational-cause faults | *gated behind `--use-llm`* |
-| Report quality | Rubric (root cause / action / severity) | *gated behind `--use-llm`* |
-| Memory effect | Diagnosis quality with vs. without memory | *gated behind `--use-llm`* |
+**Detection degrades gracefully as faults get subtler** (volume family, baseline std ≈ 175 rows):
 
-All eleven fault types are detected: the original six (row-drop, column-null, schema-change,
-distribution-shift, stale-data, operational-cause) plus the widened coverage —
-**duplicate_rows** (uniqueness), **out_of_range** (validity), and the operational faults
-**oom**, **timeout**, **retry_storm** (slow_job is dashboard-only as it needs a clean duration
-baseline). The LLM-dependent metrics (attribution, report quality, memory ablation) run with
-`python -m evaluation.run_experiments --use-llm` once an `ANTHROPIC_API_KEY` is set.
+| Volume drop | 40 % | 20 % | 10 % | 8 % | **5 %** | **3 %** | **2 %** |
+|---|---|---|---|---|---|---|---|
+| z-score | −23 | −11 | −5.6 | −4.5 | **−2.8** | **−1.6** | **−1.0** |
+| detected (z ≥ 3) | ✅ | ✅ | ✅ | ✅ | **❌** | **❌** | **❌** |
 
-Detection latency: high/critical anomalies escalate **within 1 run**; low/medium escalate
-after 2 consecutive runs by design (debounce).
+Recall by severity bucket: **obvious 1.0 · moderate 1.0 · subtle 0.0**.
 
-**Honest caveat — the 1.00 is on deliberately obvious faults.** Those scenarios drop 50% of
-rows or multiply a column 10×; a z ≥ 3 detector cannot miss them, and the matched-TP scoring
-only confirms the *right* check fired. The credible picture is the **graduated study**
-(`python -m evaluation.graduated`): the same detector, faults injected across a range of
-magnitudes against a baseline with realistic ~2% volume variance.
+**Precision / recall / F1 vs. the z-threshold** — the operating point is a visible trade-off:
 
-- **Degradation:** volume drops of 40/20/10/8% are caught; **5/3/2% are missed** (they fall
-  below z ≥ 3). Recall by severity bucket: obvious **1.0**, moderate **1.0**, subtle **0.0**.
-- **Threshold sweep (volume z):** F1 peaks at z=1.5 (**0.94**), and the shipped z=3 operating
-  point gives precision **1.00** / recall **0.67** / F1 **0.80** — a visible trade-off, not a
-  magic number.
-- **Learning loop (real):** a recurring benign +25% volume surge trips the volume check every
-  run; after one `not_a_problem` creates a `SuppressionRule` through the governance path, the
-  false-positive rate for that pattern drops **1.0 → 0.0** (`fp_trend = [1,0,0,0,0,0]`). (The
-  clean-run FP trend in `run_experiments` is flat at 0 because clean runs produce no FPs to
-  suppress — the suppression demo is where the loop is actually exercised.)
+| z-threshold | 1.5 | 2.0 | 2.5 | **3.0 (shipped)** | 4.0 | 5.0 |
+|---|---|---|---|---|---|---|
+| precision | 1.00 | 1.00 | 1.00 | **1.00** | 1.00 | 1.00 |
+| recall | 0.89 | 0.78 | 0.78 | **0.67** | 0.67 | 0.56 |
+| F1 | **0.94** | 0.88 | 0.88 | **0.80** | 0.80 | 0.71 |
+
+**Learning loop (real, not aspirational):** a recurring benign +25% volume surge trips the
+volume check every run; after one `not_a_problem` creates a `SuppressionRule` via the governance
+path, the false-positive rate for that pattern drops **1.0 → 0.0** (`fp_trend = [1,0,0,0,0,0]`).
+(The clean-run FP trend is flat at 0 only because healthy runs produce no FPs to suppress — the
+suppression demo is where the loop is exercised.)
+
+**Sanity check on labelled faults** (`run_experiments`, no-LLM): all 11 injected fault types
+(the 6 original + validity, uniqueness, oom, timeout, retry_storm) score **1.00 / 1.00 / 1.00**
+with **0** false positives — but these are *deliberately obvious*, and a run counts as a true
+positive only when the **matching check-type** fires (not just any anomaly), so this confirms
+correctness rather than proving sensitivity. Latency ≤ 1 run for high/critical (2 for
+low/medium by debounce).
+
+**LLM-gated (pending a funded key):** root-cause **attribution**, **report-quality** rubric, and
+the **memory-ablation** lift — the headline differentiators — run under
+`python -m evaluation.run_experiments --use-llm`.
 
 ### What it detects (7 data + 5 operational checks)
 
