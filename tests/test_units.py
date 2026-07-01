@@ -171,3 +171,27 @@ def test_operational_retry_storm_and_clean():
     assert any(a.metric == "operational.retry_storm" for a in rs)
     # healthy job → no operational anomalies
     assert check_operational(_op("success"), hist, "transactions", intent) == []
+
+
+# ── evaluation: earned true positives (matched check-type) ─────────────────
+
+from evaluation.detection_metrics import DetectionResult, evaluate_detection
+
+
+def test_detection_tp_requires_matching_check():
+    # row_drop expects a 'volume' anomaly. A 'schema' anomaly must NOT earn a TP.
+    right = DetectionResult("r1", "row_drop", "", ["row_count"], ["volume"], True)
+    wrong = DetectionResult("r2", "row_drop", "", ["schema_hash"], ["schema"], True)
+    assert right.matched is True
+    assert wrong.matched is False
+
+
+def test_evaluate_detection_units_are_per_run():
+    results = [
+        DetectionResult("r1", "row_drop", "", ["row_count"], ["volume"], True),          # TP
+        DetectionResult("r2", "column_null", "amount", ["schema_hash"], ["schema"], True),  # wrong check → FN
+    ]
+    # A clean run with 3 spurious anomalies is ONE false positive (per-run), not 3.
+    m = evaluate_detection(results, clean_runs_detected=[["a", "b", "c"], []])
+    assert m.true_positives == 1 and m.false_negatives == 1
+    assert m.false_positives == 1 and m.true_negatives == 1

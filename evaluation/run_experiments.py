@@ -214,11 +214,13 @@ def run_experiments(
         ground_truths.append(gt_label)
 
         detected_metrics = [a.metric for inc in incidents for a in inc.anomalies]
+        detected_checks = [a.check_type.value for inc in incidents for a in inc.anomalies]
         detection_results.append(DetectionResult(
             run_id=manifest["run_id"],
             injected_fault_type=fault_spec.fault_type,
             injected_target=fault_spec.target,
             detected_anomalies=detected_metrics,
+            detected_checks=detected_checks,
             was_detected=len(detected_metrics) > 0,
         ))
 
@@ -252,8 +254,8 @@ def run_experiments(
         "false_positives": det.false_positives,
         "false_negatives": det.false_negatives,
         "per_scenario": [
-            {"fault": r.injected_fault_type, "detected": r.was_detected,
-             "metrics": r.detected_anomalies}
+            {"fault": r.injected_fault_type, "matched": r.matched,
+             "any_anomaly": r.was_detected, "checks": sorted(set(r.detected_checks))}
             for r in detection_results
         ],
     }

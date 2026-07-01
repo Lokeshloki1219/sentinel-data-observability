@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
@@ -221,7 +221,7 @@ def _inject_operational_cause(
     downstream_params = spec.params.get("downstream_params", {"drop_pct": 0.5})
 
     # Create the operational signal for the upstream job
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     op_signal = OperationalSignals(
         run_id=str(uuid.uuid4())[:8],
         job_name=spec.target,
