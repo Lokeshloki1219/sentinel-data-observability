@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -213,7 +213,7 @@ def run_pipeline(
     current_batch = batch
 
     # Base time for realistic stage timing
-    pipeline_start = datetime.utcnow()
+    pipeline_start = datetime.now(timezone.utc)
     stage_clock = pipeline_start
 
     for stage_name, stage_fn, upstream_jobs in _STAGES:

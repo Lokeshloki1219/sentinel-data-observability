@@ -70,7 +70,7 @@ def _metrics(store: SentinelStore, intent, batch, run_id: str):
                            intent.key_columns, unique_key=intent.unique_key)
 
 
-def run_graduated(output_path: str = "data/graduated_eval.json") -> Dict:
+def run_graduated(output_path: str = "data/graduated_eval.json", verbose: bool = True) -> Dict:
     rng = np.random.default_rng(0)
     store = SentinelStore(":memory:")
     intent = load_intent("transactions")
@@ -166,31 +166,35 @@ def run_graduated(output_path: str = "data/graduated_eval.json") -> Dict:
         for k, v in buckets.items()
     }
 
-    # ── Print a readable summary ───────────────────────────────────────
-    print("\n=== Graduated volume detection (baseline std ~%.0f rows) ===" % base_std)
-    for row in grad["volume"]:
-        print(f"  drop {int(row['drop_pct']*100):>2}%  rows={row['rows']:>5}  "
-              f"z={row['z']:>7.2f}  {'DETECTED' if row['detected'] else 'missed  '}  {row['severity'] or ''}")
-    print("\n=== Precision/Recall/F1 vs z-threshold (volume) ===")
-    print("   t     precision  recall   f1     (tp/fp/fn)")
-    for s in results["threshold_sweep"]:
-        print(f"  {s['z_threshold']:>3}     {s['precision']:.2f}      {s['recall']:.2f}    "
-              f"{s['f1']:.2f}    ({s['tp']}/{s['fp']}/{s['fn']})")
-    print("\n=== Recall by severity bucket (volume) ===")
-    for k, v in results["per_severity_recall"].items():
-        print(f"  {k:9s} n={v['n']}  recall={v['recall']}")
     best = max(results["threshold_sweep"], key=lambda s: s["f1"])
-    print(f"\nBest F1 at z={best['z_threshold']} (F1={best['f1']}); "
-          f"the shipped detector uses z>=3.0.")
+    results["best_f1"] = {"z_threshold": best["z_threshold"], "f1": best["f1"]}
+
+    # ── Print a readable summary ───────────────────────────────────────
+    if verbose:
+        print("\n=== Graduated volume detection (baseline std ~%.0f rows) ===" % base_std)
+        for row in grad["volume"]:
+            print(f"  drop {int(row['drop_pct']*100):>2}%  rows={row['rows']:>5}  "
+                  f"z={row['z']:>7.2f}  {'DETECTED' if row['detected'] else 'missed  '}  {row['severity'] or ''}")
+        print("\n=== Precision/Recall/F1 vs z-threshold (volume) ===")
+        print("   t     precision  recall   f1     (tp/fp/fn)")
+        for s in results["threshold_sweep"]:
+            print(f"  {s['z_threshold']:>3}     {s['precision']:.2f}      {s['recall']:.2f}    "
+                  f"{s['f1']:.2f}    ({s['tp']}/{s['fp']}/{s['fn']})")
+        print("\n=== Recall by severity bucket (volume) ===")
+        for k, v in results["per_severity_recall"].items():
+            print(f"  {k:9s} n={v['n']}  recall={v['recall']}")
+        print(f"\nBest F1 at z={best['z_threshold']} (F1={best['f1']}); "
+              f"the shipped detector uses z>=3.0.")
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:
         json.dump(results, f, indent=2, default=str)
-    print(f"\nSaved -> {output_path}")
+    if verbose:
+        print(f"\nSaved -> {output_path}")
     return results
 
 
-def run_suppression_demo(output_path: str = "data/suppression_demo.json") -> Dict:
+def run_suppression_demo(output_path: str = "data/suppression_demo.json", verbose: bool = True) -> Dict:
     """Exercise the reject->suppression->FP-drop loop for real (no LLM).
 
     A benign but recurring +25% volume surge trips the volume check every run
@@ -238,10 +242,11 @@ def run_suppression_demo(output_path: str = "data/suppression_demo.json") -> Dic
         "fp_rate_before": fp_trend[0],
         "fp_rate_after": round(sum(fp_trend[1:]) / len(fp_trend[1:]), 3),
     }
-    print("\n=== Suppression loop (benign +25% volume surge) ===")
-    print(f"  FP trend per run: {fp_trend}   (1 = false positive fired)")
-    print(f"  Before labelling: {result['fp_rate_before']}  ->  after not_a_problem: {result['fp_rate_after']}")
-    print(f"  Rule: suppress {rule.match.check_type} on '{rule.match.metric}'")
+    if verbose:
+        print("\n=== Suppression loop (benign +25% volume surge) ===")
+        print(f"  FP trend per run: {fp_trend}   (1 = false positive fired)")
+        print(f"  Before labelling: {result['fp_rate_before']}  ->  after not_a_problem: {result['fp_rate_after']}")
+        print(f"  Rule: suppress {rule.match.check_type} on '{rule.match.metric}'")
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:

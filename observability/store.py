@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import timezone
 from typing import List, Optional
 
 import duckdb
@@ -244,7 +245,12 @@ class SentinelStore:
             "SELECT data FROM ops_signals WHERE job_name = ?", [job_name]
         ).fetchall()
         sigs = [OperationalSignals.model_validate_json(r[0]) for r in rows]
-        sigs.sort(key=lambda s: s.started_at, reverse=True)
+
+        def _key(s):  # coerce to tz-aware so naive/aware never crash the sort
+            t = s.started_at
+            return t.replace(tzinfo=timezone.utc) if t.tzinfo is None else t
+
+        sigs.sort(key=_key, reverse=True)
         return sigs[:n]
 
     # ── Incidents ──────────────────────────────────────────────────────────

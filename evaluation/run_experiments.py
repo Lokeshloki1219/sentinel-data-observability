@@ -306,6 +306,22 @@ def run_experiments(
         "total_clean_runs": total_clean,
     }
 
+    # ── Phase 5: graduated degradation + real suppression loop (no LLM) ──
+    # The credible picture: same detector, faults across magnitudes on a
+    # baseline with realistic variance, plus the reject->suppression->FP-drop
+    # loop actually exercised.
+    logger.info("=== Phase 5: Graduated degradation + suppression loop ===")
+    from evaluation.graduated import run_graduated, run_suppression_demo
+    grad = run_graduated(output_path="data/graduated_eval.json", verbose=False)
+    supp = run_suppression_demo(output_path="data/suppression_demo.json", verbose=False)
+    results["graduated"] = {
+        "threshold_sweep": grad["threshold_sweep"],
+        "per_severity_recall": grad["per_severity_recall"],
+        "best_f1": grad["best_f1"],
+        "volume_detection": grad["graduated_detection"]["volume"],
+    }
+    results["suppression_loop"] = supp
+
     # ── Output ──────────────────────────────────────────────────────────
     logger.info("=== Results ===\n%s", json.dumps(results, indent=2, default=str))
     if output_path:
