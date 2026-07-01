@@ -177,8 +177,8 @@ def _render_pipeline_flow(store: SentinelStore, memory_store: MemoryStore, execu
     # ── Controls: run a live batch ─────────────────────────────────────
     c1, c2, c3 = st.columns([3, 1, 1])
     fault_label = c1.selectbox("Inject fault", list(_FAULT_PRESETS.keys()), key="flow_fault")
-    use_llm = c2.checkbox("LLM report", value=True, key="flow_use_llm",
-                          help="Generate an LLM root-cause report (needs ANTHROPIC_API_KEY); untick for faster rules-only runs.")
+    use_llm = c2.checkbox("LLM report", value=False, key="flow_use_llm",
+                          help="Generate an LLM root-cause report (needs ANTHROPIC_API_KEY + credits). Off = fast, rules-only runs.")
     run_clicked = c3.button("▶ Run a batch", key="flow_run", use_container_width=True)
 
     if run_clicked:
