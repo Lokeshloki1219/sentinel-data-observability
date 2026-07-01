@@ -17,6 +17,17 @@ and outcome is remembered, so diagnoses improve over time.
 watching of subsequent runs for auto-resolution. See [docs/architecture.md](docs/architecture.md)
 and the [design write-up](docs/writeup.md).
 
+## Demo
+
+![Sentinel Pipeline Flow — live animated data-architecture](docs/demo.gif)
+
+> _The **🔀 Pipeline Flow** tab: a batch streams through `raw → cleaned → enriched → fraud_features`;
+> the broken stage glows (🟠 data error / 🔴 pipeline error) and a dashed "caused-by" arc links a
+> job failure to the downstream data fault._
+> **To record `docs/demo.gif`:** run `python scripts/seed_demo.py --fresh` then
+> `streamlit run dashboard/app.py`, open the Pipeline Flow tab, and screen-capture a "▶ Run a
+> batch → operational_cause" cycle (e.g. with ScreenToGif / LICEcap).
+
 ## Architecture — six layers
 
 | # | Layer | Module | Fidelity |
@@ -118,18 +129,39 @@ the **audit log**.
 ## Evaluation
 
 ```bash
-python -m evaluation.run_experiments            # detection F1 + FP trend (no key)
-python -m evaluation.run_experiments --use-llm  # + attribution, report quality, memory ablation
+python -m evaluation.run_experiments   # labelled faults: matched P/R/F1 + FP trend (no key)
+python -m evaluation.graduated         # honest degradation: threshold sweep + suppression loop
+python -m evaluation.run_experiments --use-llm   # + attribution, report quality, memory ablation
 ```
 
-Latest no-LLM run (`data/eval_results.json`):
+**Labelled faults** (`run_experiments`, no-LLM): on the 11 injected faults, detection scores
+**1.00 / 1.00 / 1.00** with **0** false positives — but these are *deliberately obvious*
+(50% row-drops, 10× shifts), and a run only counts as a true positive when the **matching
+check-type** fires (not just any anomaly). So the honest picture is the graduated study:
 
-| Metric | Result |
-|--------|--------|
-| Detection precision / recall / F1 | **1.00 / 1.00 / 1.00** (6/6 fault types) |
-| False positives over 10 clean runs | **0** |
-| Clean-run FP rate | **0.0** |
-| Attribution / report quality / memory effect | gated behind `--use-llm` |
+**Graduated degradation** (`evaluation.graduated`) — same detector, faults injected at a range
+of magnitudes against a baseline with realistic ~2% volume variance:
+
+| Volume drop | z-score | Detected? |
+|---|---|---|
+| 40 / 20 / 10 / 8 % | −23 … −4.5 | ✅ |
+| **5 / 3 / 2 %** | −2.8 … −1.0 | ❌ (below z ≥ 3) |
+
+Precision/recall/F1 vs. the z-threshold (recall degrades gracefully as the bar rises):
+
+| z | 1.5 | 2.0 | **3.0 (shipped)** | 4.0 | 5.0 |
+|---|---|---|---|---|---|
+| precision | 1.00 | 1.00 | **1.00** | 1.00 | 1.00 |
+| recall | 0.89 | 0.78 | **0.67** | 0.67 | 0.56 |
+| F1 | 0.94 | 0.88 | **0.80** | 0.80 | 0.71 |
+
+**Learning loop** (real, no-LLM): a recurring benign +25% volume surge trips the volume check
+every run; after one `not_a_problem` creates a `SuppressionRule` via the governance path, the
+false-positive rate for that pattern drops **1.0 → 0.0** (`fp_trend = [1,0,0,0,0,0]`).
+
+**LLM-gated metrics** — root-cause **attribution**, **report-quality** rubric, and the
+**memory-ablation** lift (the headline differentiators) run under `--use-llm`; numbers pending
+a funded key.
 
 ## Tests
 

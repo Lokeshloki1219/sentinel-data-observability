@@ -105,6 +105,23 @@ baseline). The LLM-dependent metrics (attribution, report quality, memory ablati
 Detection latency: high/critical anomalies escalate **within 1 run**; low/medium escalate
 after 2 consecutive runs by design (debounce).
 
+**Honest caveat — the 1.00 is on deliberately obvious faults.** Those scenarios drop 50% of
+rows or multiply a column 10×; a z ≥ 3 detector cannot miss them, and the matched-TP scoring
+only confirms the *right* check fired. The credible picture is the **graduated study**
+(`python -m evaluation.graduated`): the same detector, faults injected across a range of
+magnitudes against a baseline with realistic ~2% volume variance.
+
+- **Degradation:** volume drops of 40/20/10/8% are caught; **5/3/2% are missed** (they fall
+  below z ≥ 3). Recall by severity bucket: obvious **1.0**, moderate **1.0**, subtle **0.0**.
+- **Threshold sweep (volume z):** F1 peaks at z=1.5 (**0.94**), and the shipped z=3 operating
+  point gives precision **1.00** / recall **0.67** / F1 **0.80** — a visible trade-off, not a
+  magic number.
+- **Learning loop (real):** a recurring benign +25% volume surge trips the volume check every
+  run; after one `not_a_problem` creates a `SuppressionRule` through the governance path, the
+  false-positive rate for that pattern drops **1.0 → 0.0** (`fp_trend = [1,0,0,0,0,0]`). (The
+  clean-run FP trend in `run_experiments` is flat at 0 because clean runs produce no FPs to
+  suppress — the suppression demo is where the loop is actually exercised.)
+
 ### What it detects (7 data + 5 operational checks)
 
 | 🟠 Data | 🔴 Operational (from job status/duration/retries/exit-code) |
