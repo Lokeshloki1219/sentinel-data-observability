@@ -117,9 +117,13 @@ positive only when the **matching check-type** fires (not just any anomaly), so 
 correctness rather than proving sensitivity. Latency ≤ 1 run for high/critical (2 for
 low/medium by debounce).
 
-**LLM-gated (pending a funded key):** root-cause **attribution**, **report-quality** rubric, and
-the **memory-ablation** lift — the headline differentiators — run under
-`python -m evaluation.run_experiments --use-llm`.
+**LLM reasoning** (`--use-llm`, Sonnet — `data/eval_results_llm.json`): root-cause **attribution
+0.82 overall / 1.00 on operational-cause faults** (the cross-signal RCA correctly blames the
+upstream job / infrastructure, not the data — the differentiator lands); **report-quality 0.77**
+avg (root-cause 0.82, severity 1.00, confidence-calibration 0.82, action-appropriateness a weak
+0.36); **memory-ablation +0.05** (0.77 with-memory vs 0.72 without — modest but positive, driven
+by better action selection). Honest weak spots: action-appropriateness (the model over-prefers
+`manual`) and the small memory corpus.
 
 ### Known limitations (where a naive baseline breaks)
 

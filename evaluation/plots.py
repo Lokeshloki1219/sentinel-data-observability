@@ -101,10 +101,74 @@ def _flow_preview(out: Path) -> None:
                  connectionstyle="arc3,rad=-0.4", arrowstyle="->",
                  mutation_scale=14, color=_RED, lw=1.8, ls="--"))
     ax.text(7.65, cy + 1.05, "caused-by", ha="center", color=_RED, fontsize=8)
-    ax.text(0.2, 3.7, "🔴 pipeline error (OOM)   🟠 data error (volume drop)   "
-            "→ correlation", fontsize=9, color="#94a3b8")
+    ax.scatter([0.35], [3.7], s=48, c=_RED, edgecolors="none")
+    ax.text(0.6, 3.7, "pipeline error (OOM)", va="center", color="#94a3b8", fontsize=9)
+    ax.scatter([4.0], [3.7], s=48, c=_AMBER, edgecolors="none")
+    ax.text(4.25, 3.7, "data error (volume drop)", va="center", color="#94a3b8", fontsize=9)
+    ax.text(8.2, 3.7, "--> correlation", va="center", color=_RED, fontsize=9)
     fig.patch.set_facecolor("#0e1117")
     fig.savefig(out, dpi=130, facecolor="#0e1117"); plt.close(fig)
+
+
+def make_demo_gif(out: str = "docs/demo.gif", frames: int = 48, fps: int = 16) -> None:
+    """Programmatic animated demo of the Pipeline Flow (no screen recording).
+
+    Data particles stream left->right; downstream of the failed `enriched`
+    stage they turn amber (bad data propagating); the failed node pulses red and
+    a dashed caused-by arc links it to the amber downstream fault.
+    """
+    import numpy as np
+    from matplotlib import animation
+    from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
+
+    nodes = [("PaySim", 0.6, _GREEN), ("raw", 2.6, _GREEN), ("cleaned", 4.6, _GREEN),
+             ("enriched", 6.6, _RED), ("fraud_features", 8.7, _AMBER),
+             ("warehouse", 10.9, _GREEN)]
+    cy, x0, x1, fault_x = 2.6, 1.3, 10.2, 6.6
+    rng = np.random.default_rng(0)
+    parts = rng.uniform(0, 1, 16)          # particle phases along the pipe
+    speed = 0.018 + rng.uniform(0, 0.01, 16)
+
+    fig, ax = plt.subplots(figsize=(10.5, 3.2))
+    fig.patch.set_facecolor("#0e1117")
+
+    def draw(frame):
+        ax.clear(); ax.set_xlim(0, 12); ax.set_ylim(0, 4); ax.axis("off")
+        ax.set_facecolor("#0e1117")
+        pulse = 2.0 + 1.6 * abs(np.sin(frame * 0.35))
+        for label, x, color in nodes:
+            lw = pulse if color in (_RED, _AMBER) else 2.0
+            ax.add_patch(FancyBboxPatch((x - 0.7, cy - 0.32), 1.4, 0.64,
+                         boxstyle="round,pad=0.02", fc="#111827", ec=color, lw=lw))
+            ax.text(x, cy, label, ha="center", va="center", color="#e2e8f0",
+                    fontsize=8.5, family="monospace")
+        for i in range(len(nodes) - 1):
+            ax.add_patch(FancyArrowPatch((nodes[i][1] + 0.7, cy), (nodes[i+1][1] - 0.7, cy),
+                         arrowstyle="->", mutation_scale=12, color="#475569", lw=1.4))
+        # particles
+        for j in range(len(parts)):
+            p = (parts[j] + frame * speed[j]) % 1.0
+            x = x0 + (x1 - x0) * p
+            col = _AMBER if x > fault_x else "#38bdf8"
+            ax.scatter([x], [cy], s=42, c=col, zorder=4, edgecolors="none")
+        # caused-by arc (pulses)
+        ax.add_patch(FancyArrowPatch((fault_x, cy + 0.32), (8.7, cy + 0.32),
+                     connectionstyle="arc3,rad=-0.4", arrowstyle="->",
+                     mutation_scale=13, color=_RED, lw=1.4 + 0.8*abs(np.sin(frame*0.35)), ls="--"))
+        ax.text(7.65, cy + 1.0, "caused-by", ha="center", color=_RED, fontsize=8)
+        # legend (drawn dots — emoji glyphs are missing from matplotlib fonts)
+        ax.scatter([0.3], [3.7], s=45, c=_RED, edgecolors="none")
+        ax.text(0.5, 3.7, "enriched job failed (OOM)", va="center", color="#94a3b8", fontsize=8.5)
+        ax.scatter([4.4], [3.7], s=45, c=_AMBER, edgecolors="none")
+        ax.text(4.6, 3.7, "downstream data fault", va="center", color="#94a3b8", fontsize=8.5)
+        ax.text(8.0, 3.7, "--> correlation", va="center", color=_RED, fontsize=8.5)
+        return []
+
+    anim = animation.FuncAnimation(fig, draw, frames=frames, interval=1000/fps, blit=False)
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    anim.save(out, writer=animation.PillowWriter(fps=fps), dpi=90)
+    plt.close(fig)
+    print(f"Wrote {out}")
 
 
 def make_plots(json_path: str = "data/graduated_eval.json", out_dir: str = "docs") -> None:

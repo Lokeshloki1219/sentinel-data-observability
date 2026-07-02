@@ -23,14 +23,12 @@ and the [design write-up](docs/writeup.md).
 
 ## Demo
 
-![Sentinel Pipeline Flow — data-architecture with a correlated fault](docs/flow_preview.png)
+![Sentinel Pipeline Flow — data streams through the stages; the failed enriched job (red) causes a downstream data fault (amber), linked by a caused-by arc](docs/demo.gif)
 
-> _The **🔀 Pipeline Flow** tab renders this **live and animated**: a batch streams through
+> _The **🔀 Pipeline Flow** tab renders this **live** in the browser: a batch streams through
 > `raw → cleaned → enriched → fraud_features`; the broken stage glows (🟠 data error / 🔴 pipeline
-> error) and a dashed "caused-by" arc links a job failure to the downstream data fault._
-> **For the animated GIF:** run `python scripts/seed_demo.py --fresh` → `streamlit run
-> dashboard/app.py`, open the Pipeline Flow tab, and screen-capture a "▶ Run a batch →
-> operational_cause" cycle (e.g. ScreenToGif / LICEcap) as `docs/demo.gif`.
+> error) and a dashed "caused-by" arc links a job failure to the downstream data fault. Try it with
+> `python scripts/seed_demo.py --fresh` → `streamlit run dashboard/app.py`._
 
 ## Architecture — six layers
 
@@ -163,9 +161,19 @@ The precision/recall/F1 **vs. z-threshold** curve makes the operating point a vi
 every run; after one `not_a_problem` creates a `SuppressionRule` via the governance path, the
 false-positive rate for that pattern drops **1.0 → 0.0** (`fp_trend = [1,0,0,0,0,0]`).
 
-**LLM-gated metrics** — root-cause **attribution**, **report-quality** rubric, and the
-**memory-ablation** lift (the headline differentiators) run under `--use-llm`; numbers pending
-a funded key.
+**LLM reasoning** (`run_experiments --use-llm`, Sonnet — `data/eval_results_llm.json`):
+
+| Metric | Result |
+|---|---|
+| **Root-cause attribution** (overall) | **0.82** — `caused_by` matches ground truth |
+| **Attribution on operational-cause faults** | **1.00** — correctly blames the upstream job / infra, not the data |
+| **Report-quality rubric** (avg) | **0.77** (root-cause 0.82 · severity 1.00 · confidence-calibration 0.82 · action-appropriateness 0.36) |
+| **Memory-ablation lift** | **+0.05** (0.77 with-memory vs 0.72 without) — retrieval helps, mainly via better action selection |
+
+Honest reads: operational-cause **attribution is the standout (1.00)** — the cross-signal RCA
+works. Action-appropriateness (0.36) is the weakest link (the model often proposes `manual`
+where the rubric wants a concrete action), and the memory lift is **modest but positive** on
+this small corpus.
 
 ## Tests
 
