@@ -169,6 +169,13 @@ def run_graduated(output_path: str = "data/graduated_eval.json", verbose: bool =
     best = max(results["threshold_sweep"], key=lambda s: s["f1"])
     results["best_f1"] = {"z_threshold": best["z_threshold"], "f1": best["f1"]}
 
+    # Per-family recall across the graduated magnitudes (completes the story
+    # beyond volume: null degrades at its 0.01 SLA, distribution near 1.1x).
+    results["family_recall"] = {
+        fam: round(sum(1 for r in rows if r["detected"]) / len(rows), 3)
+        for fam, rows in grad.items() if rows
+    }
+
     # ── Print a readable summary ───────────────────────────────────────
     if verbose:
         print("\n=== Graduated volume detection (baseline std ~%.0f rows) ===" % base_std)
