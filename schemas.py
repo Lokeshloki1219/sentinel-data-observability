@@ -278,10 +278,30 @@ class SuggestedAction(BaseModel):
     rationale: str = ""
 
 
+class Likelihood(str, Enum):
+    high = "high"
+    medium = "medium"
+    low = "low"
+
+
+class DifferentialCause(BaseModel):
+    """One candidate root cause in a differential diagnosis.
+
+    Pairs a plausible cause with the signal that rules it in/out (or what to
+    check when it can't be confirmed from available signals) and the *targeted*
+    remedy for that specific cause — so the fix isn't a generic "add resources".
+    """
+    cause: str
+    likelihood: Likelihood = Likelihood.medium
+    signal: str = ""          # discriminating evidence, or what-to-check
+    fix: str = ""             # targeted remedy for THIS cause
+
+
 class ReasoningOutput(BaseModel):
     severity: SeverityLevel
     likely_root_cause: str
     caused_by: CausedBy
+    differential: List[DifferentialCause] = Field(default_factory=list)
     evidence: List[str] = Field(default_factory=list)
     suggested_action: SuggestedAction
     confidence: float = Field(ge=0.0, le=1.0)

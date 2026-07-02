@@ -430,6 +430,20 @@ def _render_incident_card(
             st.markdown(f"**Root Cause:** {report.likely_root_cause}")
             st.markdown(f"**Caused By:** `{report.caused_by.value}`")
             st.markdown(f"**Confidence:** {report.confidence:.0%}")
+
+            # Differential — ranked candidate causes, each with its targeted fix.
+            if report.differential:
+                _lm = {"high": "🔴", "medium": "🟠", "low": "🟡"}
+                st.markdown("**Differential (ranked causes → fix):**")
+                for dc in report.differential:
+                    badge = _lm.get(dc.likelihood.value, "⚪")
+                    line = f"{badge} **{dc.cause}**"
+                    if dc.signal:
+                        line += f" — _{dc.signal}_"
+                    if dc.fix:
+                        line += f" → **fix:** {dc.fix}"
+                    st.markdown(f"- {line}")
+
             if report.evidence:
                 st.markdown("**Evidence:**")
                 for e in report.evidence:

@@ -59,6 +59,12 @@ def build_summary_text(incident: Incident) -> str:
             f"Caused by: {report.caused_by.value}. "
             f"Confidence: {report.confidence:.2f}."
         )
+        if report.differential:
+            diff_str = "; ".join(
+                f"{dc.cause} ({dc.likelihood.value}) → {dc.fix}"
+                for dc in report.differential if dc.cause
+            )
+            parts.append(f"Differential: {diff_str}.")
         if report.evidence:
             evidence_str = "; ".join(report.evidence)
             parts.append(f"Evidence: {evidence_str}.")

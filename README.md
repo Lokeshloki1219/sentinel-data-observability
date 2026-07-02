@@ -175,6 +175,23 @@ works. Action-appropriateness (0.36) is the weakest link (the model often propos
 where the rubric wants a concrete action), and the memory lift is **modest but positive** on
 this small corpus.
 
+### Differential diagnosis (not generic fixes)
+
+The reasoner is given a **failure-mode playbook** + pre-computed **signal digest** (current vs
+baseline: volume, duration, retries, exit-code, schema-changed) and returns a **ranked
+differential** — candidate causes, each with the discriminating signal and its *targeted* fix —
+instead of one reflexive remedy. For an OOM (`exit 137`) with **stable input volume**:
+
+> ❌ *Generic:* "enriched ran out of memory → increase memory allocation."
+>
+> ✅ *Differential:*
+> - 🔴 **Memory leak / unbounded cache / runaway logging** — _exit 137 with stable row_count (9980 vs ~10000), memory grows independent of volume_ → **fix:** profile heap; cap/rotate logs, bound cache, stream instead of accumulate
+> - 🟠 **Oversized broadcast / collect()** — _OOM hit early (3s)_ → **fix:** join on partitioned data instead of broadcasting a large table
+> - 🟡 **Container memory genuinely too low** — _no volume growth_ → **fix:** _last resort only after ruling out the above_ — raise the limit
+
+"Increase resources" is explicitly demoted to a last resort unless the evidence shows genuine
+under-provisioning with stable input.
+
 ## Tests
 
 ```bash

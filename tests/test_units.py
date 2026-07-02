@@ -229,3 +229,37 @@ def test_reporter_returns_report_invalid_on_malformed_json():
     report, valid = r.generate_report(ctx)
     # Non-JSON after the single retry → (None, False) → orchestrator marks report_invalid.
     assert report is None and valid is False
+
+
+def test_reasoning_output_parses_differential():
+    from schemas import ReasoningOutput
+    data = {
+        "severity": "high", "likely_root_cause": "runaway logging exhausted memory",
+        "caused_by": "infrastructure",
+        "differential": [
+            {"cause": "runaway logging", "likelihood": "high",
+             "signal": "memory grew with stable row_count", "fix": "cap/rotate logs"},
+            {"cause": "input volume spike", "likelihood": "low",
+             "signal": "row_count near baseline", "fix": "chunk the batch"},
+        ],
+        "evidence": ["enriched exit_code 137", "row_count 9980 vs ~10000 baseline"],
+        "suggested_action": {"type": "manual", "target": "enriched", "rationale": "cap logs"},
+        "confidence": 0.7,
+    }
+    out = ReasoningOutput.model_validate(data)
+    assert len(out.differential) == 2
+    assert out.differential[0].likelihood.value == "high"
+    assert "cap/rotate logs" in out.differential[0].fix
+
+
+def test_build_user_message_includes_signal_digest():
+    from reasoning.prompts import build_user_message
+    ctx = ReasoningContext(
+        anomaly=Anomaly(anomaly_id="a1", run_id="r1", dataset="transactions",
+                        stage="enriched", metric="operational.oom", check_type=_CT.operational,
+                        observed={"exit_code": 137}, expected="success", deviation=1.0,
+                        severity_hint=_SV.critical, detected_at=datetime.now(timezone.utc)),
+        intent=_intent(),
+    )
+    msg = build_user_message(ctx)
+    assert "signal_digest" in msg and "anomaly" in msg

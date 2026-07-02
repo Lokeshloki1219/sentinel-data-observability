@@ -66,7 +66,12 @@ See [architecture.md](architecture.md) for the diagram.
 5. **Group → Reason** — `group_related` bundles anomalies per `(dataset, stage, run)`;
    for each group, retrieve top-k similar past incidents from Memory, assemble the
    `ReasoningContext`, and call Claude for a schema-valid `ReasoningOutput`. Invalid LLM
-   output after one retry → `report_invalid` + rules-only severity.
+   output after one retry → `report_invalid` + rules-only severity. The prompt carries a
+   **failure-mode playbook** and a pre-computed **signal digest** (current-vs-baseline volume,
+   duration, retries, exit-code, schema-changed) so the model produces a ranked **differential
+   diagnosis** — candidate causes each with a discriminating signal and a *targeted* fix —
+   rather than a generic remedy; "increase resources" is demoted to a last resort unless the
+   evidence shows genuine under-provisioning. (Example in the README.)
 6. **Persist + Audit** — create the `Incident`, write `incident_created` /
    `report_generated` audit entries.
 7. **Gate + Route** — `evaluate_gate` maps risk tier × criticality to a gate; high/critical
