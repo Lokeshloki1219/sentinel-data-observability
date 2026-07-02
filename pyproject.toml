@@ -43,6 +43,9 @@ dependencies = [
 gpu = [
     "torch>=2.3,<3",
 ]
+viz = [
+    "matplotlib>=3.8,<4",   # regenerate docs/*.png via `python -m evaluation.plots`
+]
 
 [build-system]
 requires = ["hatchling"]
