@@ -1,5 +1,9 @@
 # Sentinel
 
+[![tests](https://github.com/Lokeshloki1219/sentinel-data-observability/actions/workflows/tests.yml/badge.svg)](https://github.com/Lokeshloki1219/sentinel-data-observability/actions/workflows/tests.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![python: 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](pyproject.toml)
+
 **An LLM-powered agentic data-pipeline observability system.**
 
 Sentinel sits alongside a running data pipeline and watches **two signal streams together** —
@@ -19,14 +23,14 @@ and the [design write-up](docs/writeup.md).
 
 ## Demo
 
-![Sentinel Pipeline Flow — live animated data-architecture](docs/demo.gif)
+![Sentinel Pipeline Flow — data-architecture with a correlated fault](docs/flow_preview.png)
 
-> _The **🔀 Pipeline Flow** tab: a batch streams through `raw → cleaned → enriched → fraud_features`;
-> the broken stage glows (🟠 data error / 🔴 pipeline error) and a dashed "caused-by" arc links a
-> job failure to the downstream data fault._
-> **To record `docs/demo.gif`:** run `python scripts/seed_demo.py --fresh` then
-> `streamlit run dashboard/app.py`, open the Pipeline Flow tab, and screen-capture a "▶ Run a
-> batch → operational_cause" cycle (e.g. with ScreenToGif / LICEcap).
+> _The **🔀 Pipeline Flow** tab renders this **live and animated**: a batch streams through
+> `raw → cleaned → enriched → fraud_features`; the broken stage glows (🟠 data error / 🔴 pipeline
+> error) and a dashed "caused-by" arc links a job failure to the downstream data fault._
+> **For the animated GIF:** run `python scripts/seed_demo.py --fresh` → `streamlit run
+> dashboard/app.py`, open the Pipeline Flow tab, and screen-capture a "▶ Run a batch →
+> operational_cause" cycle (e.g. ScreenToGif / LICEcap) as `docs/demo.gif`.
 
 ## Architecture — six layers
 
@@ -139,21 +143,21 @@ python -m evaluation.run_experiments --use-llm   # + attribution, report quality
 (50% row-drops, 10× shifts), and a run only counts as a true positive when the **matching
 check-type** fires (not just any anomaly). So the honest picture is the graduated study:
 
-**Graduated degradation** (`evaluation.graduated`) — same detector, faults injected at a range
-of magnitudes against a baseline with realistic ~2% volume variance:
+**Graduated degradation** (`evaluation.graduated` → `evaluation.plots`) — same detector, faults
+injected at a range of magnitudes against a baseline with realistic ~2% volume variance.
+Detection **degrades gracefully** as faults get subtler (green = detected, red = missed);
+per-family recall: volume **0.67**, null **0.83**, distribution **0.86**:
 
-| Volume drop | z-score | Detected? |
-|---|---|---|
-| 40 / 20 / 10 / 8 % | −23 … −4.5 | ✅ |
-| **5 / 3 / 2 %** | −2.8 … −1.0 | ❌ (below z ≥ 3) |
+![Detection vs. fault magnitude](docs/degradation_curve.png)
 
-Precision/recall/F1 vs. the z-threshold (recall degrades gracefully as the bar rises):
+The precision/recall/F1 **vs. z-threshold** curve makes the operating point a visible trade-off:
 
-| z | 1.5 | 2.0 | **3.0 (shipped)** | 4.0 | 5.0 |
-|---|---|---|---|---|---|
-| precision | 1.00 | 1.00 | **1.00** | 1.00 | 1.00 |
-| recall | 0.89 | 0.78 | **0.67** | 0.67 | 0.56 |
-| F1 | 0.94 | 0.88 | **0.80** | 0.80 | 0.71 |
+![Precision/recall/F1 vs. z-threshold](docs/threshold_curve.png)
+
+> **Why ship z = 3.0 when F1 peaks at z = 1.5?** By choice, not oversight: at z = 3 precision
+> stays **1.00** (recall 0.67), so every alert is real — favouring precision over recall to avoid
+> **alert fatigue**, consistent with the suggest-first philosophy. Lowering to z = 1.5 buys recall
+> (0.89) but would start surfacing marginal blips.
 
 **Learning loop** (real, no-LLM): a recurring benign +25% volume surge trips the volume check
 every run; after one `not_a_problem` creates a `SuppressionRule` via the governance path, the

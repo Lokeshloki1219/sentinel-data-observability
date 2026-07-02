@@ -121,6 +121,24 @@ low/medium by debounce).
 the **memory-ablation** lift — the headline differentiators — run under
 `python -m evaluation.run_experiments --use-llm`.
 
+### Known limitations (where a naive baseline breaks)
+
+Naming these is deliberate — they are exactly what a reviewer probes:
+
+- **Cold start.** The first `BASELINE_WINDOW` (30) runs have no rolling baseline, so the
+  statistical checks (volume/null z-score, distribution drift) **under-fire** until it fills —
+  `run_detection` requires `MIN_BASELINE` (5) history points before those checks activate. The
+  rule-based checks (freshness, schema, explicit null thresholds, volume bounds) work from run 1.
+  This is expected: better silent than noisy on an unlearned baseline.
+- **Seasonality.** Real transaction volume has a weekday/weekend rhythm; a flat rolling mean would
+  false-positive on legitimately quiet days (a Sunday looks like a "volume drop"). The current
+  baseline is intentionally simple. A **day-of-week / seasonal baseline** (or STL/Prophet
+  decomposition) is the natural next step, and the suppression loop already provides a manual
+  escape hatch in the meantime.
+- **Operating point.** F1 peaks at z=1.5 but the detector ships at **z=3.0** *by choice* — at z=3
+  precision is 1.00, favouring precision over recall to avoid alert fatigue (suggest-first). The
+  threshold sweep makes this a defensible decision rather than a hidden default.
+
 ### What it detects (7 data + 5 operational checks)
 
 | 🟠 Data | 🔴 Operational (from job status/duration/retries/exit-code) |

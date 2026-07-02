@@ -195,3 +195,37 @@ def test_evaluate_detection_units_are_per_run():
     m = evaluate_detection(results, clean_runs_detected=[["a", "b", "c"], []])
     assert m.true_positives == 1 and m.false_negatives == 1
     assert m.false_positives == 1 and m.true_negatives == 1
+
+
+# ── LLM contract failure path (no API tokens: client is mocked) ────────────
+
+from types import SimpleNamespace
+from reasoning.reporter import Reporter
+from schemas import Anomaly, CheckType as _CT, SeverityLevel as _SV, ReasoningContext
+
+
+class _FakeMessages:
+    def create(self, **_kw):
+        # The model rambles instead of returning the strict JSON object.
+        return SimpleNamespace(content=[SimpleNamespace(text="Sure! Here is my analysis...")])
+
+
+class _FakeClient:
+    def __init__(self):
+        self.messages = _FakeMessages()
+
+
+def test_reporter_returns_report_invalid_on_malformed_json():
+    r = Reporter.__new__(Reporter)          # bypass __init__ (no key / network)
+    r._client, r._model = _FakeClient(), "test-model"
+    ctx = ReasoningContext(
+        anomaly=Anomaly(anomaly_id="a1", run_id="r1", dataset="transactions",
+                        stage="enriched", metric="row_count", check_type=_CT.volume,
+                        observed=1500, expected=10000, deviation=-20.0,
+                        severity_hint=_SV.critical,
+                        detected_at=datetime.now(timezone.utc)),
+        intent=_intent(),
+    )
+    report, valid = r.generate_report(ctx)
+    # Non-JSON after the single retry → (None, False) → orchestrator marks report_invalid.
+    assert report is None and valid is False
