@@ -15,9 +15,10 @@ data/
 # ChromaDB persistence
 chroma_data/
 
-# IDE
+# IDE / tooling
 .vscode/
 .idea/
+.claude/
 
 # OS
 Thumbs.db
